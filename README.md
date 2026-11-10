@@ -1,81 +1,89 @@
 # Print Desk
 
-A 3D-printing request site for teachers, with an admin console for the people running the printers.
+A 3D-printing request site for teachers, with an admin page for the people running the printers.
+The pages are hosted free on **GitHub Pages**. Data, files and admin logins live in a free **Supabase** project.
 
 **Teachers** can:
-- Upload an **STL or 3MF** file (with a live, rotatable 3D preview), **or describe an idea** in text.
-- Enter their **email (required)** — every update goes there, along with a private tracking link.
+- Upload an **STL or 3MF** file (with a 3D preview they can rotate), **or describe an idea** in text.
+- Enter their **email (required)** and get a private tracking link.
 - For ideas: **approve the preview image** an admin sends, or ask for changes, before anything prints.
-- Get emails when printing **starts** and **finishes**, sent by the admin handling their request.
-- **Book a pickup** at **PU2 or PU3** from the times admins set up (and reschedule if needed).
-- Receive a **pickup confirmation email from the admin who handed it over**.
+- Get emails when printing **starts** and **finishes**.
+- **Book a pickup** at **PU2 or PU3** from the times admins set up, and change it later if needed.
+- Get a **pickup confirmation email from the admin who handed it over**.
 
-**Admins** (password sign-in, `/admin`) can:
+**Admins** (`admin.html`, email + password) can:
 - Work through requests: *Started printing* → *Finished printing* → *Hand it off*.
-- Upload preview images for idea requests (teacher must approve before printing).
-- Record each hand-off: **location** (short answer), **who received it**, and who gave it (the signed-in admin). The teacher gets a confirmation email sent in that admin’s name, with replies going to that admin.
-- Set up **pickup times**: date, window, split into 15/20/30/60-minute slots, weekly repeats, which locations (PU2/PU3), and spots per time.
-- Manage the **team** and each admin’s permissions.
-- Create **fine-grained access tokens**.
-- Send teacher updates from the **Outbox**: each one is pre-written, and they open it in their own Gmail and press Send.
+- Upload preview images for idea requests. The teacher must approve before printing.
+- Record each hand-off: **location** (short answer), **who received it**, and who gave it.
+- Set up **pickup times**: date, time window, 15–60 minute slots, weekly repeats, PU2 and/or PU3, spots per time.
+- Send teacher updates from their **own Gmail**. Each email is written for them; they click **Open in Gmail** and press Send.
+- Invite other admins and choose each one’s **permissions**.
 
-## Admin sign-in and fine-grained tokens
+## Set it up (about 15 minutes, all free)
 
-Signing in with email + password gives you a 12-hour **session token** carrying exactly your permissions. Every API call checks the token’s scopes:
+### 1. Create the Supabase project
+1. Go to [supabase.com](https://supabase.com), sign in (GitHub works) and click **New project**. Any name and region; save the database password somewhere.
+2. When it’s ready, open **SQL Editor → New query**, paste everything from [`supabase/setup.sql`](supabase/setup.sql) and click **Run**. It should say *Success*.
+3. Open **Project Settings → API Keys** (or **Data API**) and copy two things:
+   - **Project URL**, like `https://abcdefghijkl.supabase.co`
+   - the **anon public** key (or **publishable** key)
 
-| Scope | Allows |
+### 2. Connect the site to Supabase
+On GitHub, open [`docs/js/config.js`](docs/js/config.js), click the ✏️ pencil, paste the two values between the quotes, then click **Commit changes**.
+
+```js
+export const SUPABASE_URL = 'https://abcdefghijkl.supabase.co';
+export const SUPABASE_KEY = 'eyJhbGciOi…';
+```
+
+These two values are meant to be public. The rules in `setup.sql` are what protect the data.
+
+### 3. Turn on GitHub Pages
+In the repo: **Settings → Pages → Build and deployment**
+- Source: **Deploy from a branch**
+- Branch: the branch with this code (e.g. `main`), folder **`/docs`** → **Save**
+
+After a minute your site is at **`https://tkfam151.github.io/3d/`**. Share that link with teachers.
+
+### 4. Let Supabase send people back to your site
+In Supabase: **Authentication → URL Configuration**
+- **Site URL**: `https://tkfam151.github.io/3d/admin.html`
+- **Redirect URLs**: add `https://tkfam151.github.io/3d/admin.html`
+
+### 5. Create your admin account
+Open `https://tkfam151.github.io/3d/admin.html` → **Create account**. **The first account ever created becomes the owner with full access**, so do this right away. Supabase emails you a confirmation link; click it, then sign in.
+
+> Supabase’s built-in email only sends a few messages per hour. If confirmation emails are slow, you can turn off **Authentication → Sign In / Providers → Email → Confirm email**.
+
+### 6. Add pickup times
+Go to **Pickup times** in the admin page and add some. Teachers can’t book until there are times.
+
+## Day-to-day
+
+**Emails.** Every update creates an email that is already written. After *Started printing*, *Finished printing*, a preview, or a hand-off, it pops up straight away: click **Open in Gmail**, press **Send** in Gmail, then click **Yes, it’s sent**. Emails caused by the teacher (“we got your request”, “pickup booked”) wait in the **Outbox** tab, and the red badge counts the ones for you. The first admin to act on a request handles it, and its emails are signed with their name. **I’ll handle this** takes a request over. Gmail links can’t attach files, so the preview email has a **Download image** button for dragging the picture in.
+
+**Adding admins.** **Team → Invite admin**: enter their name, email and permissions, then send them the admin link. They click **Create account** with that email and get exactly those permissions.
+
+| Permission | Allows |
 |---|---|
-| `orders:read` | View requests, download files, Outbox |
-| `orders:write` | Print status updates, preview images, closing requests, marking emails sent |
+| `orders:read` | See requests, files and the Outbox |
+| `orders:write` | Print updates, previews, closing requests, marking emails sent |
 | `pickups:write` | Recording hand-offs |
-| `schedule:write` | Adding/removing pickup times |
-| `team:write` | Adding/removing admins and changing their permissions |
+| `schedule:write` | Adding and removing pickup times |
+| `team:write` | Inviting and removing admins, changing permissions |
 
-From a password sign-in, an admin can create **personal access tokens** (Tokens tab): name, expiry (7 days–1 year), and any subset of their own scopes — e.g. a print-room iPad that can only record hand-offs. Tokens start with `pd_pat_`, are shown once, are stored only as SHA-256 hashes, can be revoked any time, and can never create other tokens. A token never has more access than its admin currently has. You can sign in with one via “Use an access token instead”.
+Permissions are checked by the database itself, not just hidden in the page.
 
-Passwords are hashed with scrypt; sign-in attempts are rate-limited.
+## How it’s built
+- `docs/`: the website (plain HTML/CSS/JS, served by GitHub Pages). `docs/vendor/` holds bundled copies of supabase-js and three.js, so no CDN is needed.
+- `supabase/setup.sql`: tables, database functions, security rules and the file bucket.
+- Teachers don’t sign in. Their secret tracking link (`track.html#…`) is the key to their request, and their files sit in a folder named after it.
+- Uploads are limited to **50 MB** (Supabase free plan).
 
-## Put it online (Render)
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tkfam151/3d)
-
-1. Click the button (or in Render: **New → Blueprint** and pick this repo). Sign in with GitHub and allow Render to see `tkfam151/3d`.
-2. Click **Deploy Blueprint**. It uses the Starter plan with a 1 GB disk (about $7/month) so requests and uploaded files survive restarts.
-3. When it says **Live**, open the link (like `https://print-desk.onrender.com`). That's the site for teachers.
-4. In Render, open **print-desk → Environment** and copy `SETUP_CODE`. Go to `/admin` on your site and create the first admin with that code.
-5. In **Pickup times**, add some times, then share the link with teachers.
-
-Every push to GitHub redeploys automatically. Using your own domain? Add it under **Settings → Custom Domains** and set `BASE_URL` to it so email links use it.
-
-## Run it locally
-
-Requires Node.js 18+ (20.12+ to auto-load `.env`).
-
+## Development
 ```bash
 npm install
-cp .env.example .env   # set BASE_URL (used in email links) and optionally the first admin
-npm start              # http://localhost:3000
+npm run vendor   # rebuild docs/vendor after changing library versions
+npm run serve    # preview docs/ at http://localhost:8080 (fill in config.js first)
+PGHOST=… PGPORT=… PGUSER=postgres npm test   # tests setup.sql against a local Postgres
 ```
-
-Visit `/admin`. If no admin exists yet, you’ll be asked to create one (set `SETUP_CODE` to stop strangers from doing this on a public server), or set `ADMIN_EMAIL` / `ADMIN_PASSWORD` before first start.
-
-Then add pickup times under **Pickup times** — teachers can’t book until some exist.
-
-### Email
-By default (`EMAIL_MODE=draft`) **the server never sends email itself**. Every update — request received, preview ready, started printing, finished printing, pickup booked, hand-off confirmation, request closed — is written as a draft, addressed to the teacher and signed by the admin handling the request.
-
-- When an admin clicks *Started printing*, *Finished printing*, sends a preview, or confirms a hand-off, the draft pops up right away. **Open in Gmail** opens a pre-filled compose window in that admin’s own Gmail (`authuser=<their admin email>`); they press **Send**, then click **Yes, it’s sent** back in the app. *Other mail app* uses a `mailto:` link instead.
-- Emails triggered by the teacher (request received, pickup booked) wait in the **Outbox** tab. The red badge counts drafts waiting for you.
-- The first admin to act on a request becomes its **handler**, and teacher-triggered drafts are written for them. Another admin can click **I’ll handle this** to take over; unsent drafts move to them.
-- Gmail compose links can’t include attachments, so the preview-image email has a **Download image** button for dragging the picture into Gmail. The teacher can also see the preview on their tracking page.
-
-Prefer fully automatic sending? Set `EMAIL_MODE=smtp` and the `SMTP_*` variables. Emails then go out on their own (from “Admin Name via Print Desk”, with replies to that admin), and the Outbox becomes a log.
-
-### Data
-Everything is stored in `DATA_DIR` (default `./data`): `db.json` plus uploaded models and preview images. Back up that folder. Deploy behind HTTPS (any Node host — a school server, Render, Railway, Fly.io, a VPS) and keep `data/` on a persistent disk.
-
-## Tests
-```bash
-npm test
-```
-Covers setup, sign-in, required email, file-type checks, the full STL flow (print → finish → book PU3 → hand-off email from the admin), the idea/preview-approval flow, token scopes and revocation, and per-admin permissions.

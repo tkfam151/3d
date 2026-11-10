@@ -1,17 +1,19 @@
-import { $, h, fill, api, busy, toast, pill, fmtDate, fmtDay, fmtTime, fmtSize, byDay, STATUS, LOGO } from './common.js';
+import { $, h, fill, busy, toast, pill, fmtDate, fmtDay, fmtTime, fmtSize, byDay, STATUS, LOGO } from './common.js';
 
 $('#brand').insertAdjacentHTML('afterbegin', LOGO);
-const token = location.pathname.split('/').pop();
-const base = `/api/track/${encodeURIComponent(token)}`;
+import { config, configured, rpc, fileUrl, setupNotice } from './db.js';
+
+let token = location.hash.slice(1);
 const app = $('#app');
 let order;
 
 async function load() {
   try {
-    order = await api(base);
+    if (!token) throw new Error('This link is missing its tracking code. Check the link in your email.');
+    order = await rpc('get_request', { p_token: token });
     render();
   } catch (err) {
-    fill(app, h('div.empty', h('div.big', '🔍'), h('h1.h3', 'We couldn’t find that request.'), h('p', err.message), h('a.btn', { href: '/' }, 'Start a new request')));
+    fill(app, h('div.empty', h('div.big', '🔍'), h('h1.h3', 'We couldn’t find that request.'), h('p', err.message), h('a.btn', { href: './' }, 'Start a new request')));
   }
 }
 
@@ -78,7 +80,7 @@ function previewCard(o) {
   const latest = o.previews[o.previews.length - 1];
   const card = h('div.card',
     h('div.card-head', h('div', h('div.h3', 'Preview'), h('div.muted.small', `Sent ${fmtDate(latest.at)}`)), o.status === 'approved' || stepIndex(o) > 1 ? h('span.pill.green', 'Approved') : null),
-    h('img.preview-img', { src: `${base}/preview/${latest.id}`, alt: 'Preview of your print' }),
+    h('img.preview-img', { src: fileUrl(latest.path), alt: 'Preview of your print' }),
     latest.note ? h('p', { style: { margin: '0 0 16px' } }, `“${latest.note}”`) : null,
   );
   if (o.status === 'awaiting_approval') {
@@ -88,14 +90,14 @@ function previewCard(o) {
       h('div.btn-row', { style: { marginTop: '10px' } },
         h('button.btn', { onclick: (e) => busy(e.currentTarget, async () => {
           if (!feedback.value.trim()) return toast('Tell us what you’d like changed.', { error: true });
-          try { order = await api(`${base}/changes`, { method: 'POST', body: { feedback: feedback.value } }); render(); toast('Feedback sent'); } catch (err) { toast(err.message, { error: true }); }
+          try { order = await rpc('request_changes', { p_token: token, p_feedback: feedback.value }); render(); toast('Feedback sent'); } catch (err) { toast(err.message, { error: true }); }
         }) }, 'Send feedback'),
         h('button.btn.plain', { onclick: () => { changes.hidden = true; actions.hidden = false; } }, 'Cancel'),
       ),
     );
     const actions = h('div.btn-row',
       h('button.btn.success', { onclick: (e) => busy(e.currentTarget, async () => {
-        try { order = await api(`${base}/approve`, { method: 'POST' }); render(); toast('Approved — thank you!'); } catch (err) { toast(err.message, { error: true }); }
+        try { order = await rpc('approve_preview', { p_token: token }); render(); toast('Approved — thank you!'); } catch (err) { toast(err.message, { error: true }); }
       }) }, 'Looks good — print it'),
       h('button.btn.secondary', { onclick: () => { actions.hidden = true; changes.hidden = false; feedback.focus(); } }, 'Request changes'),
     );
@@ -129,7 +131,7 @@ function pickupCard(o) {
 async function buildPicker(el, o) {
   fill(el, h('div.empty', h('span.spinner')));
   let data;
-  try { data = await api(`${base}/slots`); } catch (err) { fill(el, h('p.form-error', err.message)); return; }
+  try { data = { locations: config.LOCATIONS, slots: await rpc('open_slots', { p_token: token }) }; } catch (err) { fill(el, h('p.form-error', err.message)); return; }
 
   let location = o.pickup?.location || data.locations[0];
   let slotId = o.pickup?.slotId || null;
@@ -155,7 +157,7 @@ async function buildPicker(el, o) {
   };
   confirm.onclick = () => busy(confirm, async () => {
     try {
-      order = await api(`${base}/pickup`, { method: 'POST', body: { slotId, location } });
+      order = await rpc('book_pickup', { p_token: token, p_slot: slotId, p_location: location });
       render();
       toast('Pickup booked — check your email');
     } catch (err) { toast(err.message, { error: true }); buildPicker(el, o); }
@@ -187,11 +189,11 @@ function detailsCard(o) {
     const viewer = h('div');
     card.append(viewer,
       h('div.file-chip', { style: { marginBottom: '18px' } },
-        h('div.ext', o.file.original.split('.').pop().toUpperCase()),
-        h('div.grow', h('div.name', o.file.original), h('div.muted.small', fmtSize(o.file.size))),
-        h('a.btn.plain.sm', { href: `${base}/file?download=1` }, 'Download'),
+        h('div.ext', o.file.name.split('.').pop().toUpperCase()),
+        h('div.grow', h('div.name', o.file.name), h('div.muted.small', fmtSize(o.file.size))),
+        h('a.btn.plain.sm', { href: fileUrl(o.file.path, o.file.name) }, 'Download'),
       ));
-    import('./viewer.js').then(({ mountViewer }) => mountViewer(viewer, fetch(`${base}/file`).then((r) => r.arrayBuffer()), o.file.original));
+    import('./viewer.js').then(({ mountViewer }) => mountViewer(viewer, fetch(fileUrl(o.file.path)).then((r) => r.arrayBuffer()), o.file.name));
   }
   if (o.description) card.append(h('p', { style: { margin: '0 0 18px', whiteSpace: 'pre-wrap' } }, o.description));
   card.append(h('dl.kv',
@@ -219,6 +221,7 @@ function activityCard(o) {
   );
 }
 
-load();
+if (configured) load(); else setupNotice(app);
 // Refresh quietly when the teacher comes back to the tab.
-document.addEventListener('visibilitychange', () => { if (!document.hidden && order) api(base).then((o) => { if (o.status !== order.status) { order = o; render(); } }).catch(() => {}); });
+addEventListener('hashchange', () => { token = location.hash.slice(1); load(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && order) rpc('get_request', { p_token: token }).then((o) => { if (o.status !== order.status) { order = o; render(); } }).catch(() => {}); });

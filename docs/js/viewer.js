@@ -1,18 +1,9 @@
-// Interactive 3D preview for STL / 3MF files, using three.js (served from node_modules).
+// Interactive 3D preview for STL / 3MF files, using three.js (bundled in docs/vendor).
 // If it can't load, we quietly show a message instead.
 import { h, fill } from './common.js';
 
-const CDN = '/vendor/three';
 let libs;
-async function loadLibs() {
-  libs ||= Promise.all([
-    import(`${CDN}/build/three.module.js`),
-    import(`${CDN}/examples/jsm/controls/OrbitControls.js`),
-    import(`${CDN}/examples/jsm/loaders/STLLoader.js`),
-    import(`${CDN}/examples/jsm/loaders/3MFLoader.js`),
-  ]);
-  return libs;
-}
+const loadLibs = () => (libs ||= import('../vendor/three.js'));
 
 /**
  * Render a model into `container`.
@@ -25,8 +16,8 @@ export async function mountViewer(container, buffer, filename) {
   fill(container, h('div.viewer-msg', h('span.spinner')));
   let THREE, OrbitControls, STLLoader, ThreeMFLoader;
   try {
-    const [three, oc, stl, tmf] = await loadLibs();
-    THREE = three; OrbitControls = oc.OrbitControls; STLLoader = stl.STLLoader; ThreeMFLoader = tmf.ThreeMFLoader;
+    THREE = await loadLibs();
+    ({ OrbitControls, STLLoader, ThreeMFLoader } = THREE);
   } catch {
     fill(container, h('div.viewer-msg', '3D preview unavailable'));
     return;

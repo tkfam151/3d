@@ -7,13 +7,12 @@
   <meta name="description" content="Send a 3D print request. Upload an STL or 3MF file, or describe your idea.">
   <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/styles.css">
-  <script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js" } }</script>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <nav class="nav"><div class="nav-inner">
-    <a class="brand" href="/" id="brand">Print Desk</a>
+    <a class="brand" href="./" id="brand">Print Desk</a>
     <div class="nav-links"><a href="#request">New request</a><a href="#how">How it works</a></div>
   </div></nav>
 
@@ -46,7 +45,7 @@
                 <input type="file" name="file" accept=".stl,.3mf" id="file-input">
                 <svg class="drop-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M24 6 40 15v18L24 42 8 33V15z"/><path d="M8 15l16 9 16-9M24 24v18"/></svg>
                 <strong>Drop your STL or 3MF file here</strong>
-                <span class="muted">or click to choose · up to <span id="max-mb">100</span> MB</span>
+                <span class="muted">or click to choose · up to <span id="max-mb">50</span> MB</span>
               </label>
               <div id="file-picked" hidden>
                 <div id="viewer"></div>
@@ -123,7 +122,7 @@
     </section>
   </main>
 
-  <footer class="footer">Print Desk · <a href="/admin">Admin</a></footer>
-  <script type="module" src="/js/submit.js"></script>
+  <footer class="footer">Print Desk · <a href="admin.html">Admin</a></footer>
+  <script type="module" src="js/submit.js"></script>
 </body>
 </html>

@@ -1,18 +1,15 @@
-import { $, api, upload, fmtSize, LOGO } from './common.js';
+import { $, fmtSize, LOGO } from './common.js';
+import { config, configured, rpc, uploadFile, newToken, safeName, setupNotice } from './db.js';
 
 $('#brand').insertAdjacentHTML('afterbegin', LOGO);
+$('#brand').lastChild.textContent = config.SITE_NAME;
+document.title = config.SITE_NAME;
+$('#max-mb').textContent = config.MAX_MODEL_MB;
+if (!configured) setupNotice($('main'));
 
 const form = $('#request-form');
 const fileInput = $('#file-input');
 let type = 'file';
-let maxMb = 100;
-
-api('/api/config').then((c) => {
-  maxMb = c.maxModelMb;
-  $('#max-mb').textContent = maxMb;
-  document.title = c.siteName;
-  $('#brand').lastChild.textContent = c.siteName;
-}).catch(() => {});
 
 // Remember the teacher's name/email for next time.
 try {
@@ -53,7 +50,7 @@ async function picked() {
   const f = fileInput.files[0];
   if (!f) return;
   if (!/\.(stl|3mf)$/i.test(f.name)) { fileInput.value = ''; return showError('Please choose an STL or 3MF file.'); }
-  if (f.size > maxMb * 1048576) { fileInput.value = ''; return showError(`That file is too big (max ${maxMb} MB).`); }
+  if (f.size > config.MAX_MODEL_MB * 1048576) { fileInput.value = ''; return showError(`That file is too big (max ${config.MAX_MODEL_MB} MB).`); }
   hideError();
   drop.hidden = true;
   $('#file-picked').hidden = false;
@@ -73,29 +70,38 @@ form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   hideError();
   const v = (n) => form[n].value.trim();
-  if (type === 'file' && !fileInput.files[0]) return showError('Please attach an STL or 3MF file.');
+  const file = fileInput.files[0];
+  if (type === 'file' && !file) return showError('Please attach an STL or 3MF file.');
   if (type === 'idea' && !v('description')) return showError('Please describe what you’d like printed.');
   if (!v('title')) return showError('Please add a short title.');
   if (!v('teacherName')) return showError('Please add your name.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v('email'))) return showError('Please enter a valid email so we can send you updates.');
-
-  const fd = new FormData();
-  fd.append('type', type);
-  for (const n of ['title', 'teacherName', 'email', 'color', 'notes']) fd.append(n, v(n));
-  if (type === 'idea') fd.append('description', v('description'));
-  if (type === 'file') fd.append('file', fileInput.files[0]);
 
   const btn = $('#submit');
   const prog = $('#progress');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
   try {
-    const res = await upload('/api/requests', fd, {
-      onProgress: (p) => { if (type === 'file') { prog.hidden = false; prog.textContent = p < 1 ? `Uploading… ${Math.round(p * 100)}%` : 'Almost done…'; } },
-    });
+    const token = newToken();
+    let filePath = null;
+    if (type === 'file') {
+      prog.hidden = false;
+      prog.textContent = `Uploading ${fmtSize(file.size)}…`;
+      filePath = `${token}/${safeName(file.name)}`;
+      await uploadFile(filePath, file, /\.3mf$/i.test(file.name) ? 'model/3mf' : 'model/stl');
+      prog.textContent = 'Almost done…';
+    }
+    const res = await rpc('submit_request', { p: {
+      track_token: token, type,
+      teacher_name: v('teacherName'), email: v('email'), title: v('title'),
+      color: v('color'), notes: v('notes'),
+      description: type === 'idea' ? v('description') : '',
+      file_path: filePath, file_name: file && type === 'file' ? file.name : null,
+    } });
     try { localStorage.setItem('teacher', JSON.stringify({ teacherName: v('teacherName'), email: v('email') })); } catch { /* ignore */ }
-    $('#done-text').textContent = `Request #${res.number} is in. Updates will come to ${v('email')}. Keep the tracking link handy to follow along.`;
-    $('#done-track').href = res.trackUrl;
+    const trackUrl = `track.html#${token}`;
+    $('#done-text').textContent = `Request #${res.number} is in. Updates will come to ${v('email')}. Bookmark your tracking link to follow along.`;
+    $('#done-track').href = trackUrl;
     $('#form-card').hidden = true;
     $('#done-card').hidden = false;
     $('#done-card').scrollIntoView({ behavior: 'smooth', block: 'center' });

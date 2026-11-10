@@ -39,46 +39,6 @@ export function fill(el, ...children) {
   return el;
 }
 
-/** fetch wrapper: JSON in/out, throws Error(message) on failure. */
-export async function api(url, { method = 'GET', body, token, form } = {}) {
-  const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  let payload;
-  if (form) payload = form;
-  else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
-  let res;
-  try {
-    res = await fetch(url, { method, headers, body: payload });
-  } catch {
-    throw new Error('Can’t reach the server. Check your connection.');
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(data.error || `Something went wrong (${res.status}).`);
-    err.status = res.status;
-    throw err;
-  }
-  return data;
-}
-
-/** Upload with progress (fetch can't report upload progress). */
-export function upload(url, form, { onProgress, token } = {}) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
-    xhr.onload = () => {
-      let data = {};
-      try { data = JSON.parse(xhr.responseText); } catch { /* ignore */ }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-      else reject(new Error(data.error || `Upload failed (${xhr.status}).`));
-    };
-    xhr.onerror = () => reject(new Error('Upload failed. Check your connection.'));
-    xhr.send(form);
-  });
-}
-
 let toastTimer;
 export function toast(msg, { error = false } = {}) {
   let el = $('.toast');
