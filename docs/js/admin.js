@@ -17,7 +17,8 @@ const SCOPES = {
 let me = null; // { id, name, email, scopes }
 const can = (scope) => Boolean(me?.scopes.includes(scope));
 const fail = (err) => toast(err.message, { error: true });
-const pageUrl = () => location.href.split('#')[0];
+// This page's clean address (no ?query or #hash), used in email links and Supabase redirects.
+const pageUrl = () => location.origin + location.pathname.replace(/\/docs\/admin\.html$/, '/admin.html');
 
 // ================= sign in =================
 async function start() {

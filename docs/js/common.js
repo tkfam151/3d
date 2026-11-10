@@ -1,5 +1,11 @@
 // Shared helpers for every page.
 
+// Old /docs/ links forward here with ?pd=1 — tidy the address bar.
+try {
+  const u = new URL(location.href);
+  if (u.searchParams.has('pd')) { u.searchParams.delete('pd'); history.replaceState(null, '', u.pathname + u.search + u.hash); }
+} catch { /* ignore */ }
+
 /** Tiny element builder: h('div.card#x', {onclick}, child, 'text') */
 export function h(tag, props, ...children) {
   const [, name, rest] = /^([a-z0-9-]+)?(.*)$/i.exec(tag);
