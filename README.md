@@ -6,7 +6,7 @@ A 3D-printing request site for teachers, with an admin console for the people ru
 - Upload an **STL or 3MF** file (with a live, rotatable 3D preview), **or describe an idea** in text.
 - Enter their **email (required)** — every update goes there, along with a private tracking link.
 - For ideas: **approve the preview image** an admin sends, or ask for changes, before anything prints.
-- Get emails when printing **starts** and **finishes**.
+- Get emails when printing **starts** and **finishes**, sent by the admin handling their request.
 - **Book a pickup** at **PU2 or PU3** from the times admins set up (and reschedule if needed).
 - Receive a **pickup confirmation email from the admin who handed it over**.
 
@@ -16,7 +16,8 @@ A 3D-printing request site for teachers, with an admin console for the people ru
 - Record each hand-off: **location** (short answer), **who received it**, and who gave it (the signed-in admin). The teacher gets a confirmation email sent in that admin’s name, with replies going to that admin.
 - Set up **pickup times**: date, window, split into 15/20/30/60-minute slots, weekly repeats, which locations (PU2/PU3), and spots per time.
 - Manage the **team** and each admin’s permissions.
-- Create **fine-grained access tokens** and see the **email log**.
+- Create **fine-grained access tokens**.
+- Send teacher updates from the **Outbox**: each one is pre-written, and they open it in their own Gmail and press Send.
 
 ## Admin sign-in and fine-grained tokens
 
@@ -24,8 +25,8 @@ Signing in with email + password gives you a 12-hour **session token** carrying 
 
 | Scope | Allows |
 |---|---|
-| `orders:read` | View requests, download files, email log |
-| `orders:write` | Print status updates, preview images, closing requests |
+| `orders:read` | View requests, download files, Outbox |
+| `orders:write` | Print status updates, preview images, closing requests, marking emails sent |
 | `pickups:write` | Recording hand-offs |
 | `schedule:write` | Adding/removing pickup times |
 | `team:write` | Adding/removing admins and changing their permissions |
@@ -40,7 +41,7 @@ Requires Node.js 18+ (20.12+ to auto-load `.env`).
 
 ```bash
 npm install
-cp .env.example .env   # set BASE_URL, SMTP, and optionally the first admin
+cp .env.example .env   # set BASE_URL (used in email links) and optionally the first admin
 npm start              # http://localhost:3000
 ```
 
@@ -49,7 +50,14 @@ Visit `/admin`. If no admin exists yet, you’ll be asked to create one (set `SE
 Then add pickup times under **Pickup times** — teachers can’t book until some exist.
 
 ### Email
-Set the `SMTP_*` variables. Without them nothing is sent; every email is still recorded under **Admin → Email log** and printed to the console, so you can try the full flow locally.
+By default (`EMAIL_MODE=draft`) **the server never sends email itself**. Every update — request received, preview ready, started printing, finished printing, pickup booked, hand-off confirmation, request closed — is written as a draft, addressed to the teacher and signed by the admin handling the request.
+
+- When an admin clicks *Started printing*, *Finished printing*, sends a preview, or confirms a hand-off, the draft pops up right away. **Open in Gmail** opens a pre-filled compose window in that admin’s own Gmail (`authuser=<their admin email>`); they press **Send**, then click **Yes, it’s sent** back in the app. *Other mail app* uses a `mailto:` link instead.
+- Emails triggered by the teacher (request received, pickup booked) wait in the **Outbox** tab. The red badge counts drafts waiting for you.
+- The first admin to act on a request becomes its **handler**, and teacher-triggered drafts are written for them. Another admin can click **I’ll handle this** to take over; unsent drafts move to them.
+- Gmail compose links can’t include attachments, so the preview-image email has a **Download image** button for dragging the picture into Gmail. The teacher can also see the preview on their tracking page.
+
+Prefer fully automatic sending? Set `EMAIL_MODE=smtp` and the `SMTP_*` variables. Emails then go out on their own (from “Admin Name via Print Desk”, with replies to that admin), and the Outbox becomes a log.
 
 ### Data
 Everything is stored in `DATA_DIR` (default `./data`): `db.json` plus uploaded models and preview images. Back up that folder. Deploy behind HTTPS (any Node host — a school server, Render, Railway, Fly.io, a VPS) and keep `data/` on a persistent disk.

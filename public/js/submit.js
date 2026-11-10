@@ -94,7 +94,7 @@ form.addEventListener('submit', async (ev) => {
       onProgress: (p) => { if (type === 'file') { prog.hidden = false; prog.textContent = p < 1 ? `Uploading… ${Math.round(p * 100)}%` : 'Almost done…'; } },
     });
     try { localStorage.setItem('teacher', JSON.stringify({ teacherName: v('teacherName'), email: v('email') })); } catch { /* ignore */ }
-    $('#done-text').textContent = `Request #${res.number} is in. We sent a confirmation to ${v('email')} with a link to track it.`;
+    $('#done-text').textContent = `Request #${res.number} is in. Updates will come to ${v('email')}. Keep the tracking link handy to follow along.`;
     $('#done-track').href = res.trackUrl;
     $('#form-card').hidden = true;
     $('#done-card').hidden = false;

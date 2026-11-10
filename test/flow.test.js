@@ -140,3 +140,26 @@ test('team: limited admin cannot manage schedule', async () => {
   assert.equal((await j('/api/admin/slots', { token: t, body: { slots: [], locations: ['PU2'] } })).status, 403);
   assert.equal((await j('/api/admin/orders', { token: t })).status, 200);
 });
+
+test('draft mode: admin actions return a Gmail-ready draft that can be marked sent', async () => {
+  const fd = new FormData();
+  fd.append('type', 'file'); fd.append('teacherName', 'Dr. Okafor'); fd.append('email', 'okafor@school.org'); fd.append('title', 'Bridge');
+  fd.append('file', new Blob([STL]), 'bridge.stl');
+  await j('/api/requests', { body: fd });
+  const id = (await j('/api/admin/orders', { token: adminToken })).data.find((o) => o.title === 'Bridge').id;
+
+  const r = await j(`/api/admin/orders/${id}/status`, { token: adminToken, body: { status: 'printing' } });
+  assert.equal(r.data.handler.name, 'Sam Admin');
+  const d = r.data.draft;
+  assert.equal(d.status, 'draft');
+  assert.equal(d.to, 'okafor@school.org');
+  assert.match(d.text, /^Hi Dr\. Okafor,/);
+  assert.match(d.text, /Thanks,\nSam Admin$/);
+  assert.match(d.text, /\/track\//);
+
+  const before = (await j('/api/admin/emails/count', { token: adminToken })).data.draft;
+  const sent = await j(`/api/admin/emails/${d.id}`, { method: 'PATCH', token: adminToken, body: { status: 'sent' } });
+  assert.equal(sent.data.status, 'sent');
+  assert.equal(sent.data.sentBy, 'Sam Admin');
+  assert.equal((await j('/api/admin/emails/count', { token: adminToken })).data.draft, before - 1);
+});

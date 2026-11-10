@@ -4,7 +4,7 @@ $('#brand').insertAdjacentHTML('afterbegin', LOGO);
 const app = $('#app');
 const KEY = 'pd_admin_token';
 let token = null;
-let me = null; // { admin, token, allScopes, locations, mailConfigured }
+let me = null; // { admin, token, allScopes, locations, emailMode }
 try { token = sessionStorage.getItem(KEY) || localStorage.getItem(KEY); } catch { /* storage blocked */ }
 
 const can = (scope) => me?.token.scopes.includes(scope);
@@ -120,6 +120,7 @@ function route() {
   if (!me) return;
   document.querySelectorAll('.scrim').forEach((el) => el.remove());
   const tab = location.hash.slice(1) || 'requests';
+  refreshBadge();
   const view = views[tab] || viewRequests;
   document.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   fill(app, h('div.wrap', { style: { paddingBottom: '60px' } }, h('div.empty', h('span.spinner'))));
@@ -201,7 +202,9 @@ async function openOrder(id, onChange) {
 
 function orderDetail(o, refresh) {
   const out = [];
-  const act = (fn) => async (e) => busy(e.currentTarget, async () => { try { await fn(); await refresh(); } catch (err) { fail(err); } });
+  const act = (fn) => async (e) => busy(e.currentTarget, async () => {
+    try { const r = await fn(); await refresh(); if (r?.draft) showDraft(r.draft, refresh); } catch (err) { fail(err); }
+  });
 
   // --- header ---
   out.push(h('div.card', { style: { marginBottom: '16px' } },
@@ -214,8 +217,13 @@ function orderDetail(o, refresh) {
       o.color ? [h('dt', 'Color'), h('dd', o.color)] : null,
       o.notes ? [h('dt', 'Notes'), h('dd', o.notes)] : null,
       o.pickup ? [h('dt', 'Pickup'), h('dd', `${o.pickup.location} · ${fmtDay(o.pickup.start)}, ${fmtTime(o.pickup.start)}`)] : null,
+      h('dt', 'Handled by'), h('dd', o.handler ? (o.handler.id === me.admin.id ? `${o.handler.name} (you)` : o.handler.name) : 'Nobody yet'),
     ),
-    h('div.btn-row', { style: { marginTop: '16px' } }, h('a.btn.plain.sm', { href: `/track/${o.trackToken}`, target: '_blank', rel: 'noopener' }, 'Open teacher’s page ↗')),
+    h('div.btn-row', { style: { marginTop: '16px', justifyContent: 'space-between' } },
+      h('a.btn.plain.sm', { href: `/track/${o.trackToken}`, target: '_blank', rel: 'noopener' }, 'Open teacher’s page ↗'),
+      can('orders:write') && o.handler?.id !== me.admin.id && !['picked_up', 'cancelled'].includes(o.status)
+        ? h('button.btn.secondary.sm', { title: 'Teacher emails for this request will be drafted for you to send', onclick: act(() => call(`/api/admin/orders/${o.id}/claim`, { method: 'POST' }).then(() => toast('You’re handling this request'))) }, 'I’ll handle this')
+        : null),
   ));
 
   // --- next action ---
@@ -263,8 +271,13 @@ function orderDetail(o, refresh) {
   if (o.emails?.length) {
     out.push(h('div.card', { style: { marginBottom: '16px' } },
       h('div.h3', { style: { marginBottom: '10px' } }, 'Emails to teacher'),
-      o.emails.map((e) => h('div', { style: { padding: '8px 0', borderTop: '1px solid var(--hairline)' } },
-        h('div.small', e.subject), h('div.tiny.muted', `${fmtDate(e.at)} · from ${e.from} · `, emailStatus(e.status)))),
+      o.emails.map((e) => h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--hairline)' } },
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('div.small', e.subject),
+          h('div.tiny.muted', `${fmtDate(e.at)} · from ${e.from}`, e.sentBy ? ` · ${e.status} by ${e.sentBy}` : '')),
+        e.status === 'draft'
+          ? h('button.btn.sm', { onclick: () => showDraft(e, refresh) }, 'Send…')
+          : h('button.btn.plain.sm', { onclick: () => showDraft(e, refresh) }, emailStatus(e.status)))),
     ));
   }
 
@@ -281,7 +294,76 @@ function orderDetail(o, refresh) {
 }
 
 function emailStatus(s) {
-  return { sent: 'sent', logged: 'logged (SMTP off)', failed: 'failed', sending: 'sending…' }[s] || s;
+  return { draft: 'To send', sent: 'Sent', skipped: 'Skipped', failed: 'Failed', sending: 'Sending…' }[s] || s;
+}
+
+// ================= email drafts =================
+// In draft mode every teacher update is a ready-made email. "Open in Gmail"
+// opens a pre-filled compose window in the admin's own Gmail; they press Send.
+const enc = encodeURIComponent;
+const gmailUrl = (e) => `https://mail.google.com/mail/?authuser=${enc(me.admin.email)}&view=cm&fs=1&to=${enc(e.to)}&su=${enc(e.subject)}&body=${enc(e.text)}`;
+const mailtoUrl = (e) => `mailto:${enc(e.to)}?subject=${enc(e.subject)}&body=${enc(e.text)}`;
+const GMAIL_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>';
+
+function composer(email, { onChange, onDone } = {}) {
+  let e = email;
+  let opened = false;
+  const box = h('div');
+  const mark = (status) => async (ev) => busy(ev.currentTarget, async () => {
+    try {
+      e = await call(`/api/admin/emails/${e.id}`, { method: 'PATCH', body: { status } });
+      toast(status === 'sent' ? 'Marked as sent' : status === 'skipped' ? 'Skipped' : 'Moved back to “To send”');
+      refreshBadge(); onChange?.(e);
+      if (status !== 'draft' && onDone) onDone(); else draw();
+    } catch (err) { fail(err); }
+  });
+  const draw = () => {
+    const editable = e.status === 'draft' && can('orders:write');
+    fill(box,
+      h('dl.kv', { style: { marginBottom: '14px' } },
+        h('dt', 'To'), h('dd', e.to),
+        h('dt', 'Subject'), h('dd', e.subject),
+        h('dt', 'Request'), h('dd', `#${e.orderNumber} ${e.orderTitle}`)),
+      h('div.mail-body', e.text),
+      e.attachment && editable ? h('div.callout', { style: { margin: '14px 0 0', alignItems: 'center' } },
+        h('span.ci', '📎'),
+        h('div.small', { style: { flex: 1 } }, 'Gmail can’t attach files automatically. Download the preview and drag it into the email.'),
+        h('button.btn.secondary.sm', { onclick: () => download(`/api/admin/orders/${e.orderId}/preview/${e.attachment.previewId}`, e.attachment.filename) }, 'Download image')) : null,
+      h('div', { style: { marginTop: '18px' } },
+        !editable
+          ? h('div.callout.green', h('span.ci', '✓'), h('div.small', `${emailStatus(e.status)}${e.sentBy ? ` by ${e.sentBy}` : ''}${e.sentAt ? ` · ${fmtDate(e.sentAt)}` : ''}`,
+              can('orders:write') && e.status !== 'sending' ? h('button.btn.plain.sm', { onclick: mark('draft') }, 'Undo') : null))
+          : opened
+            ? [h('div.callout.orange', { style: { marginBottom: '12px' } }, h('span.ci', '✉️'), h('div.small', 'Did you press Send in Gmail?')),
+               h('div.btn-row',
+                 h('button.btn.success', { onclick: mark('sent') }, 'Yes, it’s sent'),
+                 h('a.btn.secondary', { href: gmailUrl(e), target: '_blank', rel: 'noopener' }, 'Open again'),
+                 h('button.btn.plain', { onclick: () => { opened = false; draw(); } }, 'Not yet'))]
+            : [h('div.btn-row',
+                 h('a.btn', { href: gmailUrl(e), target: '_blank', rel: 'noopener', html: `${GMAIL_ICON} Open in Gmail`, onclick: () => { opened = true; setTimeout(draw, 300); } }),
+                 h('a.btn.secondary', { href: mailtoUrl(e), onclick: () => { opened = true; setTimeout(draw, 300); } }, 'Other mail app'),
+                 h('button.btn.plain', { style: { marginLeft: 'auto' }, onclick: mark('skipped') }, 'Don’t send')),
+               h('p.hint', `Opens a new email in ${me.admin.email}’s Gmail with everything filled in — just press Send.`)],
+      ),
+    );
+  };
+  draw();
+  return box;
+}
+
+function showDraft(e, onChange) {
+  const m = modal(e.status === 'draft' ? `Email ready for ${e.teacherName || e.to}` : e.subject, h('div'));
+  fill(m.body, composer(e, { onChange, onDone: () => m.close() }));
+}
+
+async function refreshBadge() {
+  if (!me || !can('orders:read')) return;
+  try {
+    const c = await call('/api/admin/emails/count');
+    const link = $('[data-tab="emails"]');
+    link.querySelector('.badge')?.remove();
+    if (c.mine) link.append(h('span.badge', String(c.mine)));
+  } catch { /* ignore */ }
 }
 
 function nextAction(o, act, refresh) {
@@ -295,7 +377,7 @@ function nextAction(o, act, refresh) {
     const send = h(`button.btn${primary ? '' : '.secondary'}.sm`, { onclick: (e) => busy(e.currentTarget, async () => {
       if (!file.files[0]) return toast('Choose an image first.', { error: true });
       const fd = new FormData(); fd.append('image', file.files[0]); fd.append('note', note.value);
-      try { await upload(`/api/admin/orders/${o.id}/preview`, fd, { token }); toast('Preview sent to teacher'); await refresh(); } catch (err) { fail(err); }
+      try { const r = await upload(`/api/admin/orders/${o.id}/preview`, fd, { token }); toast('Preview saved'); await refresh(); if (r.draft) showDraft(r.draft, refresh); } catch (err) { fail(err); }
     }) }, 'Send preview for approval');
     return h('div', h('label.field', h('span', 'Preview image'), h('div.file-chip', file)), note, send);
   };
@@ -335,10 +417,10 @@ function nextAction(o, act, refresh) {
           : 'The teacher hasn’t booked a time yet — you can still hand it off.'),
         h('label.field', h('span', 'Pickup location'), location),
         h('label.field', h('span', 'Received by'), receivedBy),
-        h('div.callout', { style: { marginBottom: '14px' } }, h('span.ci', '✉️'), h('div.small', `A confirmation email goes to ${o.email} from you (${me.admin.name}). Replies come back to ${me.admin.email}.`)),
+        h('div.callout', { style: { marginBottom: '14px' } }, h('span.ci', '✉️'), h('div.small', me.emailMode === 'smtp' ? `A confirmation email goes to ${o.email} in your name (${me.admin.name}). Replies come back to ${me.admin.email}.` : `Next you’ll get a confirmation email for ${o.email}, ready to send from your Gmail.`)),
         h('button.btn.success', { onclick: act(() => {
           if (!location.value.trim() || !receivedBy.value.trim()) throw new Error('Fill in the location and who received it.');
-          return call(`/api/admin/orders/${o.id}/handoff`, { method: 'POST', body: { location: location.value, receivedBy: receivedBy.value } }).then(() => toast('Hand-off recorded — confirmation sent'));
+          return call(`/api/admin/orders/${o.id}/handoff`, { method: 'POST', body: { location: location.value, receivedBy: receivedBy.value } }).then((r) => { toast('Hand-off recorded'); return r; });
         }) }, 'Confirm hand-off'),
       );
       break;
@@ -552,19 +634,29 @@ async function viewTokens(root) {
   );
 }
 
-// ================= email log =================
+// ================= outbox =================
+let outboxTab = 'mine';
 async function viewEmails(root) {
-  if (!can('orders:read')) { fill(root, head('Email log'), noScope('orders:read')); return; }
-  const emails = await call('/api/admin/emails');
-  fill(root, 
-    head('Email log', me.mailConfigured ? 'Every email sent to teachers.' : 'SMTP isn’t configured, so emails are logged here instead of sent. See README to turn on sending.'),
-    emails.length ? h('div.list', emails.map((e) => h('button.list-row', { type: 'button', style: { gridTemplateColumns: '1fr auto' }, onclick: () => modal(e.subject, h('div',
-      h('dl.kv', { style: { marginBottom: '16px' } }, h('dt', 'To'), h('dd', e.to), h('dt', 'From'), h('dd', e.from), h('dt', 'When'), h('dd', fmtDate(e.at)), h('dt', 'Status'), h('dd', emailStatus(e.status))),
-      e.error ? h('div.callout.red', { style: { marginBottom: '14px' } }, h('div', e.error)) : null,
-      h('div.card', { style: { whiteSpace: 'pre-wrap', fontSize: '15px' } }, e.text))) },
+  if (!can('orders:read')) { fill(root, head('Outbox'), noScope('orders:read')); return; }
+  const all = await call('/api/admin/emails');
+  const drafts = all.filter((e) => e.status === 'draft');
+  const tabs = {
+    mine: { label: `For me (${drafts.filter((e) => e.mine).length})`, rows: drafts.filter((e) => e.mine) },
+    all: { label: `Everyone’s (${drafts.length})`, rows: drafts },
+    done: { label: 'Sent', rows: all.filter((e) => e.status !== 'draft') },
+  };
+  const sub = me.emailMode === 'smtp'
+    ? 'Emails are sent automatically. This is the record of everything sent to teachers.'
+    : 'Updates for teachers, written and ready. Open each in Gmail and press Send.';
+  const rows = tabs[outboxTab].rows;
+  fill(root,
+    head('Outbox', sub, h('div.segmented', Object.entries(tabs).map(([k, t]) => h('button', { type: 'button', 'aria-pressed': String(k === outboxTab), onclick: () => { outboxTab = k; viewEmails(root); } }, t.label)))),
+    rows.length ? h('div.list', rows.map((e) => h('button.list-row', { type: 'button', style: { gridTemplateColumns: '1fr auto' }, onclick: () => showDraft(e, () => viewEmails(root)) },
       h('div', { style: { minWidth: 0 } }, h('div.ttl', e.subject), h('div.sub', `To ${e.to} · from ${e.from}`)),
-      h('div', { style: { textAlign: 'right' } }, h(`span.pill${e.status === 'sent' ? '.green' : e.status === 'failed' ? '.red' : ''}`, emailStatus(e.status)), h('div.when', { style: { marginTop: '4px' } }, ago(e.at))),
-    ))) : h('div.list', h('div.empty', h('div.big', '✉️'), h('p', { style: { margin: 0 } }, 'No emails yet.'))),
+      h('div', { style: { textAlign: 'right' } },
+        e.status === 'draft' ? h('span.btn.sm', 'Send…') : h(`span.pill${e.status === 'sent' ? '.green' : e.status === 'failed' ? '.red' : ''}`, emailStatus(e.status)),
+        h('div.when', { style: { marginTop: '4px' } }, ago(e.at))),
+    ))) : h('div.list', h('div.empty', h('div.big', outboxTab === 'done' ? '✉️' : '✓'), h('p', { style: { margin: 0 } }, outboxTab === 'done' ? 'Nothing sent yet.' : 'All caught up — no emails waiting.'))),
   );
 }
 

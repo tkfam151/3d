@@ -176,7 +176,7 @@ function handoffCard(o) {
       h('dt', 'Location'), h('dd', x.location),
       h('dt', 'When'), h('dd', fmtDate(x.at)),
     ),
-    h('p.muted.small', { style: { margin: '16px 0 0' } }, `A confirmation email was sent from ${x.adminName}.`),
+    h('p.muted.small', { style: { margin: '16px 0 0' } }, `${x.adminName} will email you a confirmation.`),
   );
 }
 

@@ -85,7 +85,7 @@ function teacherView(o) {
 }
 
 function adminView(o) {
-  return { ...teacherView(o), id: o.id, trackToken: o.trackToken, history: o.history, cancelReason: o.cancelReason };
+  return { ...teacherView(o), id: o.id, trackToken: o.trackToken, history: o.history, cancelReason: o.cancelReason, handler: o.handler || null };
 }
 
 function sendUpload(res, stored, downloadName) {
@@ -96,7 +96,15 @@ function sendUpload(res, stored, downloadName) {
   res.sendFile(file);
 }
 
-const fire = (p) => Promise.resolve(p).catch((e) => console.error('notify failed', e));
+const fire = (p) => Promise.resolve(p).catch((e) => { console.error('notify failed', e); return null; });
+/** Create the teacher email. In draft mode, resolve to the draft so the admin can send it right away. */
+const emit = (p) => (mail.MODE === 'draft' ? fire(p) : (fire(p), Promise.resolve(null)));
+/** The first admin to act on a request becomes its handler; teacher-triggered emails are drafted for them. */
+function claim(o, a, force = false) {
+  if (!o.handler || force) o.handler = { id: a.id, name: a.name };
+}
+/** Wrap async route handlers so errors reach the error middleware. */
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // ---------- app ----------
 const app = express();
@@ -262,7 +270,7 @@ admin.get('/me', (req, res) => {
     token: { kind: req.auth.token.kind, name: req.auth.token.name, scopes: req.auth.scopes, expiresAt: req.auth.token.expiresAt },
     allScopes: auth.SCOPES,
     locations: LOCATIONS,
-    mailConfigured: mail.configured(),
+    emailMode: mail.MODE,
   });
 });
 
@@ -310,7 +318,7 @@ admin.get('/orders/:id/preview/:pid', auth.requireAuth('orders:read'), (req, res
   sendUpload(res, p.stored);
 });
 
-admin.post('/orders/:id/preview', auth.requireAuth('orders:write'), imageUpload.single('image'), (req, res) => {
+admin.post('/orders/:id/preview', auth.requireAuth('orders:write'), imageUpload.single('image'), wrap(async (req, res) => {
   const o = findOrder(req.params.id);
   if (!o) return bad(res, 'Not found.', 404);
   if (!req.file) return bad(res, 'Please choose an image.');
@@ -324,12 +332,13 @@ admin.post('/orders/:id/preview', auth.requireAuth('orders:write'), imageUpload.
     o.status = 'awaiting_approval';
     o.feedback = null;
     log(o, 'awaiting_approval', req.auth.admin.name, note);
+    claim(o, req.auth.admin);
   });
-  fire(notify.preview(o, note));
-  res.json(adminView(o));
-});
+  const draft = await emit(notify.preview(o, note, req.auth.admin));
+  res.json({ ...adminView(o), draft });
+}));
 
-admin.post('/orders/:id/status', auth.requireAuth('orders:write'), (req, res) => {
+admin.post('/orders/:id/status', auth.requireAuth('orders:write'), wrap(async (req, res) => {
   const o = findOrder(req.params.id);
   if (!o) return bad(res, 'Not found.', 404);
   const next = req.body?.status;
@@ -342,12 +351,13 @@ admin.post('/orders/:id/status', auth.requireAuth('orders:write'), (req, res) =>
   } else {
     return bad(res, 'Unknown update.');
   }
-  db.tx(() => { o.status = next; log(o, next, req.auth.admin.name); });
-  fire(next === 'printing' ? notify.printing(o) : notify.printed(o));
-  res.json(adminView(o));
-});
+  const a = req.auth.admin;
+  db.tx(() => { o.status = next; log(o, next, a.name); claim(o, a); });
+  const draft = await emit(next === 'printing' ? notify.printing(o, a) : notify.printed(o, a));
+  res.json({ ...adminView(o), draft });
+}));
 
-admin.post('/orders/:id/handoff', auth.requireAuth('pickups:write'), (req, res) => {
+admin.post('/orders/:id/handoff', auth.requireAuth('pickups:write'), wrap(async (req, res) => {
   const o = findOrder(req.params.id);
   if (!o) return bad(res, 'Not found.', 404);
   if (!['printed', 'scheduled'].includes(o.status)) return bad(res, 'Only finished prints can be handed off.');
@@ -361,21 +371,57 @@ admin.post('/orders/:id/handoff', auth.requireAuth('pickups:write'), (req, res) 
     o.status = 'picked_up';
     log(o, 'picked_up', a.name, `${receivedBy} @ ${location}`);
   });
-  fire(notify.handedOff(o, a));
-  res.json(adminView(o));
-});
+  const draft = await emit(notify.handedOff(o, a));
+  res.json({ ...adminView(o), draft });
+}));
 
-admin.post('/orders/:id/cancel', auth.requireAuth('orders:write'), (req, res) => {
+admin.post('/orders/:id/cancel', auth.requireAuth('orders:write'), wrap(async (req, res) => {
   const o = findOrder(req.params.id);
   if (!o) return bad(res, 'Not found.', 404);
   if (['picked_up', 'cancelled'].includes(o.status)) return bad(res, 'This request is already closed.');
   const reason = str(req.body?.reason, 1000);
   db.tx(() => { o.status = 'cancelled'; o.cancelReason = reason; log(o, 'cancelled', req.auth.admin.name, reason); });
-  if (req.body?.notify !== false) fire(notify.cancelled(o, reason));
+  const draft = req.body?.notify === false ? null : await emit(notify.cancelled(o, reason, req.auth.admin));
+  res.json({ ...adminView(o), draft });
+}));
+
+admin.post('/orders/:id/claim', auth.requireAuth('orders:write'), (req, res) => {
+  const o = findOrder(req.params.id);
+  if (!o) return bad(res, 'Not found.', 404);
+  const a = req.auth.admin;
+  db.tx((s) => {
+    claim(o, a, true);
+    // Unsent drafts for this request move to the new handler.
+    for (const e of s.emails) {
+      if (e.orderId === o.id && e.status === 'draft') { e.senderId = a.id; e.from = a.name; e.text = e.text.replace(/\n\nThanks,\n[^\n]*$/, `\n\nThanks,\n${a.name}`); }
+    }
+  });
   res.json(adminView(o));
 });
 
-admin.get('/emails', auth.requireAuth('orders:read'), (req, res) => res.json(db.data.emails.slice(0, 200)));
+// ----- admin: teacher emails (drafts + log) -----
+const emailView = (e, me) => ({ ...e, mine: !e.senderId || e.senderId === me.id });
+admin.get('/emails', auth.requireAuth('orders:read'), (req, res) => {
+  const status = req.query.status;
+  const list = db.data.emails.filter((e) => !status || e.status === status);
+  res.json(list.slice(0, 300).map((e) => emailView(e, req.auth.admin)));
+});
+admin.get('/emails/count', (req, res) => {
+  const drafts = db.data.emails.filter((e) => e.status === 'draft');
+  res.json({ draft: drafts.length, mine: drafts.filter((e) => emailView(e, req.auth.admin).mine).length });
+});
+admin.patch('/emails/:id', auth.requireAuth('orders:write'), (req, res) => {
+  const e = db.data.emails.find((x) => x.id === req.params.id);
+  if (!e) return bad(res, 'Not found.', 404);
+  const status = req.body?.status;
+  if (!['sent', 'skipped', 'draft'].includes(status)) return bad(res, 'Unknown status.');
+  db.tx(() => {
+    e.status = status;
+    e.sentBy = status === 'draft' ? null : req.auth.admin.name;
+    e.sentAt = status === 'draft' ? null : now();
+  });
+  res.json(emailView(e, req.auth.admin));
+});
 
 // ----- admin: pickup schedule -----
 admin.get('/slots', (req, res) => {
@@ -506,7 +552,7 @@ if (require.main === module) {
   bootstrapAdmin();
   app.listen(PORT, () => {
     console.log(`${mail.SITE_NAME} running at ${mail.BASE_URL}`);
-    if (!mail.configured()) console.log('SMTP is not configured — emails will be logged instead of sent.');
+    console.log(mail.MODE === 'smtp' ? 'Emails are sent automatically via SMTP.' : 'Emails are drafted for admins to send from Gmail (EMAIL_MODE=draft).');
     if (!db.data.admins.length) console.log(`No admins yet. Visit ${mail.BASE_URL}/admin to create the first one.`);
   });
 }

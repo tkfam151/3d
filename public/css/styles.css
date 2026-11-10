@@ -401,3 +401,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; 
 /* Inputs inside sheets sit on the grey sheet background, so lift them. */
 .sheet .input, .sheet .checks, .sheet .check, .sheet .chip, .sheet .token-box { background-color: var(--bg-elev); }
 .sheet .card .input, .sheet .card .file-chip { background-color: var(--bg-sunken); }
+
+/* Email drafts */
+.mail-body { white-space: pre-wrap; background: var(--bg-elev); border: 1px solid var(--hairline); border-radius: var(--radius-sm); padding: 16px 18px; font-size: 15px; line-height: 1.5; max-height: 340px; overflow: auto; }
+.badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: var(--red); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0; vertical-align: 1px; }
