@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print Desk</title>
+  <meta name="description" content="Send a 3D print request. Upload an STL or 3MF file, or describe your idea.">
+  <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js" } }</script>
+</head>
+<body>
+  <nav class="nav"><div class="nav-inner">
+    <a class="brand" href="/" id="brand">Print Desk</a>
+    <div class="nav-links"><a href="#request">New request</a><a href="#how">How it works</a></div>
+  </div></nav>
+
+  <header class="hero">
+    <p class="eyebrow">For teachers</p>
+    <h1 class="headline">Print it. <span class="grad">Simply.</span></h1>
+    <p class="subhead">Upload a model or describe what you need. We’ll keep you posted by email and you choose when to pick it up.</p>
+    <div class="btn-row" style="justify-content:center;margin-top:30px">
+      <a class="btn" href="#request">Start a request</a>
+      <a class="btn plain" href="#how">How it works ›</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="section" id="request">
+      <div class="narrow">
+        <div class="card" id="form-card">
+          <div style="text-align:center;margin-bottom:26px">
+            <h2 class="h2">New request</h2>
+            <p class="muted" style="margin:0 0 20px">What would you like printed?</p>
+            <div class="segmented lg" role="group" aria-label="Request type">
+              <button type="button" data-type="file" aria-pressed="true">Upload a model</button>
+              <button type="button" data-type="idea" aria-pressed="false">Describe an idea</button>
+            </div>
+          </div>
+
+          <form id="request-form" novalidate>
+            <div data-for="file">
+              <label class="drop" id="drop">
+                <input type="file" name="file" accept=".stl,.3mf" id="file-input">
+                <svg class="drop-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M24 6 40 15v18L24 42 8 33V15z"/><path d="M8 15l16 9 16-9M24 24v18"/></svg>
+                <strong>Drop your STL or 3MF file here</strong>
+                <span class="muted">or click to choose · up to <span id="max-mb">100</span> MB</span>
+              </label>
+              <div id="file-picked" hidden>
+                <div id="viewer"></div>
+                <div class="file-chip">
+                  <div class="ext" id="file-ext">STL</div>
+                  <div class="grow"><div class="name" id="file-name"></div><div class="muted small" id="file-size"></div></div>
+                  <button type="button" class="btn plain sm" id="file-clear">Change</button>
+                </div>
+              </div>
+              <div style="height:22px"></div>
+            </div>
+
+            <div data-for="idea" hidden>
+              <label class="field">
+                <span>What do you want? <b>*</b></span>
+                <textarea class="input" name="description" placeholder="e.g. 25 small cell models for my biology class, about 5 cm across, with the nucleus as a separate removable piece." maxlength="4000"></textarea>
+                <div class="hint">Include sizes, how many, and how it’ll be used. We’ll send you a preview image to approve before anything prints.</div>
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Title <b>*</b></span>
+              <input class="input" name="title" placeholder="e.g. Volcano cross-section" maxlength="100" required>
+            </label>
+            <div class="row">
+              <label class="field">
+                <span>Your name <b>*</b></span>
+                <input class="input" name="teacherName" autocomplete="name" placeholder="Ms. Rivera" maxlength="80" required>
+              </label>
+              <label class="field">
+                <span>Email <b>*</b></span>
+                <input class="input" name="email" type="email" autocomplete="email" placeholder="you@school.org" maxlength="120" required>
+              </label>
+            </div>
+            <p class="hint" style="margin:-8px 0 18px 4px">Required — this is where we send print updates and your pickup link.</p>
+            <div class="row">
+              <label class="field">
+                <span>Color preference</span>
+                <input class="input" name="color" placeholder="Any" maxlength="60">
+              </label>
+              <label class="field">
+                <span>Anything else?</span>
+                <input class="input" name="notes" placeholder="Quantity, deadline…" maxlength="2000">
+              </label>
+            </div>
+
+            <div class="form-error" id="form-error" role="alert" hidden></div>
+            <button class="btn block" type="submit" id="submit" style="margin-top:8px">Send request</button>
+            <div class="hint" id="progress" style="text-align:center;margin-top:10px" hidden></div>
+          </form>
+        </div>
+
+        <div class="card" id="done-card" hidden style="text-align:center">
+          <div class="success-mark"></div>
+          <h2 class="h2">Request sent.</h2>
+          <p class="muted" id="done-text" style="max-width:440px;margin:6px auto 26px"></p>
+          <div class="btn-row" style="justify-content:center">
+            <a class="btn" id="done-track" href="#">Track your request</a>
+            <button class="btn secondary" type="button" id="done-again">Send another</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap">
+        <h2 class="h2" style="text-align:center;margin-bottom:28px">How it works.</h2>
+        <div class="steps">
+          <div class="step"><div class="step-num">1</div><div class="h3">Send it in</div><p>Upload an STL or 3MF file — or describe your idea and we’ll design it. Approve a preview image before anything prints.</p></div>
+          <div class="step"><div class="step-num">2</div><div class="h3">Stay in the loop</div><p>We email you when it starts printing and again the moment it’s finished.</p></div>
+          <div class="step"><div class="step-num">3</div><div class="h3">Pick it up</div><p>Choose a time and a spot — PU2 or PU3. You’ll get a confirmation from the person who hands it to you.</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">Print Desk · <a href="/admin">Admin</a></footer>
+  <script type="module" src="/js/submit.js"></script>
+</body>
+</html>

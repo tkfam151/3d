@@ -1,0 +1,31 @@
+{
+  "name": "print-desk",
+  "version": "1.0.0",
+  "description": "3D print request desk for teachers: upload STL/3MF or describe an idea, get status emails, book a pickup.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tkfam151/3d.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/tkfam151/3d/issues"
+  },
+  "homepage": "https://github.com/tkfam151/3d#readme",
+  "dependencies": {
+    "express": "^4.22.3",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.5.0",
+    "three": "^0.160.0"
+  },
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  }
+}
