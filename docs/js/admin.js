@@ -11,7 +11,7 @@ const SCOPES = {
   'orders:write': 'Print updates, previews, marking emails sent',
   'pickups:write': 'Record hand-offs at pickup',
   'schedule:write': 'Set up pickup times',
-  'team:write': 'Invite and remove admins, change permissions',
+  'team:write': 'Add and remove admins, change permissions',
 };
 
 let me = null; // { id, name, email, scopes }
@@ -59,37 +59,26 @@ function authError(err) {
   return m || 'Something went wrong.';
 }
 
-function showLogin(message, { mode = 'signin' } = {}) {
+// Sign in only — there is no "create account". The owner creates every login
+// in Supabase (see Team → Add admin), and the database rejects anyone else.
+function showLogin(message) {
   const err = h('div.form-error', { hidden: !message }, message || '');
   const note = h('div.callout.green', { hidden: true, style: { marginBottom: '14px' } });
-  const name = h('input.input', { placeholder: 'Your name', autocomplete: 'name' });
   const email = h('input.input', { type: 'email', autocomplete: 'username', placeholder: 'Email', required: true });
-  const password = h('input.input', { type: 'password', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', placeholder: mode === 'signup' ? 'Password (10+ characters)' : 'Password', required: true });
-  const submit = h('button.btn.block', { type: 'submit' }, mode === 'signup' ? 'Create account' : 'Sign in');
+  const password = h('input.input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', required: true });
+  const submit = h('button.btn.block', { type: 'submit' }, 'Sign in');
   const showMsg = (text) => { fill(note, h('span.ci', '✉️'), h('div.small', text)); note.hidden = false; };
 
   const form = h('form', { onsubmit: (e) => {
     e.preventDefault(); err.hidden = true;
     busy(submit, async () => {
       try {
-        if (mode === 'signup') {
-          if (!name.value.trim()) throw new Error('Please add your name.');
-          if (password.value.length < 10) throw new Error('Use a password with at least 10 characters.');
-          const { data, error } = await sb.auth.signUp({ email: email.value.trim(), password: password.value, options: { data: { name: name.value.trim() }, emailRedirectTo: pageUrl() } });
-          if (error) throw error;
-          if (data.session) return loadMe(data.user);
-          showMsg(`Almost done — we sent a confirmation link to ${email.value.trim()}. Click it, then sign in here.`);
-        } else {
-          const { data, error } = await sb.auth.signInWithPassword({ email: email.value.trim(), password: password.value });
-          if (error) throw error;
-          await loadMe(data.user);
-        }
+        const { data, error } = await sb.auth.signInWithPassword({ email: email.value.trim(), password: password.value });
+        if (error) throw error;
+        await loadMe(data.user);
       } catch (e2) { err.textContent = authError(e2); err.hidden = false; }
     });
-  } },
-  note,
-  mode === 'signup' ? h('label.field', name) : null,
-  h('label.field', email), h('label.field', password), err, submit);
+  } }, note, h('label.field', email), h('label.field', password), err, submit);
 
   const forgot = h('button.btn.plain.sm', { type: 'button', onclick: (e) => busy(e.currentTarget, async () => {
     if (!email.value.trim()) { err.textContent = 'Enter your email above first.'; err.hidden = false; return; }
@@ -97,16 +86,9 @@ function showLogin(message, { mode = 'signin' } = {}) {
     if (error) { err.textContent = authError(error); err.hidden = false; } else showMsg('If that email has an account, a password-reset link is on its way.');
   }) }, 'Forgot password?');
 
-  authShell(
-    mode === 'signup' ? 'Create admin account' : 'Admin sign in',
-    mode === 'signup' ? 'Use the email an admin invited. The very first account becomes the owner.' : `${config.SITE_NAME} staff only.`,
-    form,
-    h('div.btn-row', { style: { justifyContent: 'center', marginTop: '14px' } },
-      mode === 'signin' ? forgot : null,
-      h('button.btn.plain.sm', { type: 'button', onclick: () => showLogin(null, { mode: mode === 'signup' ? 'signin' : 'signup' }) },
-        mode === 'signup' ? 'I have an account' : 'Create account')),
-  );
-  setTimeout(() => (mode === 'signup' ? name : email).focus(), 50);
+  authShell('Admin sign in', `${config.SITE_NAME} staff only. Accounts are created by the owner.`,
+    form, h('div.btn-row', { style: { justifyContent: 'center', marginTop: '14px' } }, forgot));
+  setTimeout(() => email.focus(), 50);
 }
 
 function showNewPassword() {
@@ -686,28 +668,37 @@ async function viewTeam(root) {
     h('label.check', h('input', { type: 'checkbox', value: k, checked: selected.includes(k) }), h('div', h('code', k), h('div.d', d)))));
   const picked = (el) => [...el.querySelectorAll('input:checked')].map((i) => i.value);
 
+  // Supabase dashboard page where the owner creates logins.
+  const usersPage = `https://supabase.com/dashboard/project/${new URL(config.SUPABASE_URL).hostname.split('.')[0]}/auth/users`;
+  const loginSteps = (email) => h('ol.small', { style: { margin: '0 0 6px', paddingLeft: '20px', lineHeight: 1.7 } },
+    h('li', 'Open ', h('a', { href: usersPage, target: '_blank', rel: 'noopener' }, 'Supabase → Authentication → Users ↗')),
+    h('li', 'Click ', h('b', 'Add user'), ' → ', h('b', 'Create new user')),
+    h('li', 'Email: ', h('b', email), ', choose a password, keep ', h('b', 'Auto Confirm User'), ' ticked → ', h('b', 'Create user')),
+    h('li', 'Send them the password privately. They sign in at ', h('b', pageUrl()), ' and can change it under Account.'));
+
   const invite = () => {
     const name = h('input.input', { placeholder: 'Full name' });
     const email = h('input.input', { type: 'email', placeholder: 'Email' });
     const scopes = scopeChecks(['orders:read', 'orders:write', 'pickups:write']);
-    const m = modal('Invite admin', h('div',
+    const m = modal('Add admin', h('div',
+      h('p.muted.small', { style: { marginTop: 0 } }, 'Only people you add here can have an account. Nobody can sign up by themselves.'),
       h('label.field', name), h('label.field', email),
       h('label.field', h('span', 'Permissions'), scopes),
       h('button.btn.block', { onclick: (e) => busy(e.currentTarget, async () => {
         try {
-          const r = await rpc('admin_invite', { p_email: email.value, p_name: name.value, p_scopes: picked(scopes) });
-          const link = pageUrl();
+          const em = email.value.trim();
+          const r = await rpc('admin_invite', { p_email: em, p_name: name.value, p_scopes: picked(scopes) });
           fill(m.body,
             h('div.callout.green', { style: { marginBottom: '14px' } }, h('span.ci', '✓'), h('div', r === 'added'
-              ? `${name.value.trim()} already had an account, so they’re an admin now.`
-              : `Invited. Send ${name.value.trim()} this link and ask them to click “Create account” using ${email.value.trim()}:`)),
-            r === 'added' ? null : h('div.token-box', link),
+              ? `${name.value.trim()} already had a login, so they’re an admin now.`
+              : `${name.value.trim()} is approved. One more step — create their login:`)),
+            r === 'added' ? null : loginSteps(em),
             h('div.btn-row', { style: { marginTop: '14px' } },
-              r === 'added' ? null : h('button.btn', { onclick: () => navigator.clipboard.writeText(link).then(() => toast('Copied')) }, 'Copy link'),
+              r === 'added' ? null : h('a.btn', { href: usersPage, target: '_blank', rel: 'noopener' }, 'Open Supabase Users ↗'),
               h('button.btn.secondary', { onclick: () => m.close() }, 'Done')));
           viewTeam(root);
         } catch (err) { fail(err); }
-      }) }, 'Invite'),
+      }) }, 'Add admin'),
     ));
   };
 
@@ -738,17 +729,17 @@ async function viewTeam(root) {
   const scopeTags = (sc) => h('div.chips', { style: { justifyContent: 'flex-end' } }, sc.length === Object.keys(SCOPES).length ? h('span.tag', 'Full access') : sc.map((s) => h('span.tag', s)));
 
   fill(root,
-    head('Team', 'People who can use this admin page. Each has their own permissions.', editable ? h('button.btn.sm', { onclick: invite }, '+ Invite admin') : null),
+    head('Team', 'People who can use this admin page. Each has their own permissions.', editable ? h('button.btn.sm', { onclick: invite }, '+ Add admin') : null),
     h('div.list', admins.map((a) => h(`${editable ? 'button' : 'div'}.list-row${editable ? '' : '.static'}`, { type: 'button', style: { gridTemplateColumns: '44px 1fr auto' }, onclick: editable ? () => edit(a) : null },
       avatar(a.name),
       h('div', { style: { minWidth: 0 } }, h('div.ttl', a.name, a.id === me.id ? h('span.muted', ' (you)') : null), h('div.sub', a.email)),
       scopeTags(a.scopes),
     ))),
     invites.length ? [
-      h('div.h3', { style: { margin: '28px 0 10px' } }, 'Invited'),
+      h('div.h3', { style: { margin: '28px 0 10px' } }, 'Waiting for a login'),
       h('div.list', invites.map((i) => h('div.list-row.static', { style: { gridTemplateColumns: '44px 1fr auto auto' } },
         avatar(i.name, true),
-        h('div', { style: { minWidth: 0 } }, h('div.ttl', i.name), h('div.sub', `${i.email} · hasn’t created an account yet`)),
+        h('div', { style: { minWidth: 0 } }, h('div.ttl', i.name), h('div.sub', `${i.email} · create their login in Supabase → Authentication → Users`)),
         scopeTags(i.scopes),
         editable ? h('button.btn.plain.sm', { style: { color: 'var(--red)' }, onclick: (e) => busy(e.currentTarget, async () => {
           try { await rpc('admin_cancel_invite', { p_email: i.email }); viewTeam(root); } catch (err) { fail(err); }

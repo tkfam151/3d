@@ -17,7 +17,7 @@ The pages are hosted free on **GitHub Pages**. Data, files and admin logins live
 - Record each hand-off: **location** (short answer), **who received it**, and who gave it.
 - Set up **pickup times**: date, time window, 15–60 minute slots, weekly repeats, PU2 and/or PU3, spots per time.
 - Send teacher updates from their **own Gmail**. Each email is written for them; they click **Open in Gmail** and press Send.
-- Invite other admins and choose each one’s **permissions**.
+- Add other admins and choose each one’s **permissions**. Nobody can create an account by themselves.
 
 ## Set it up (about 15 minutes, all free)
 
@@ -51,9 +51,10 @@ In Supabase: **Authentication → URL Configuration**
 - **Redirect URLs**: add `https://tkfam151.github.io/3d/admin.html`
 
 ### 5. Create your admin account
-Open `https://tkfam151.github.io/3d/admin.html` → **Create account**. **The first account ever created becomes the owner with full access**, so do this right away. Supabase emails you a confirmation link; click it, then sign in.
-
-> Supabase’s built-in email only sends a few messages per hour. If confirmation emails are slow, you can turn off **Authentication → Sign In / Providers → Email → Confirm email**.
+Accounts are **closed**: nobody can sign up on the website. Only the owner can create logins.
+1. In Supabase, go to **Authentication → Users → Add user → Create new user**. Enter your email and a password, keep **Auto Confirm User** ticked, then click **Create user**. The very first account becomes the owner, with full access.
+2. In **Authentication → Sign In / Providers**, turn off **Allow new users to sign up**. The database rejects strangers anyway; this is a second lock.
+3. Sign in at `https://tkfam151.github.io/3d/admin.html`.
 
 ### 6. Add pickup times
 Go to **Pickup times** in the admin page and add some. Teachers can’t book until there are times.
@@ -62,7 +63,12 @@ Go to **Pickup times** in the admin page and add some. Teachers can’t book unt
 
 **Emails.** Every update creates an email that is already written. After *Started printing*, *Finished printing*, a preview, or a hand-off, it pops up straight away: click **Open in Gmail**, press **Send** in Gmail, then click **Yes, it’s sent**. Emails caused by the teacher (“we got your request”, “pickup booked”) wait in the **Outbox** tab, and the red badge counts the ones for you. The first admin to act on a request handles it, and its emails are signed with their name. **I’ll handle this** takes a request over. Gmail links can’t attach files, so the preview email has a **Download image** button for dragging the picture in.
 
-**Adding admins.** **Team → Invite admin**: enter their name, email and permissions, then send them the admin link. They click **Create account** with that email and get exactly those permissions.
+**Adding admins.** Only the owner can do this, because it needs the Supabase dashboard.
+1. In the admin page, go to **Team → Add admin** and enter their name, email and permissions.
+2. In Supabase, go to **Authentication → Users → Add user → Create new user** with that email and a password, and keep **Auto Confirm User** ticked.
+3. Send them the password privately. They sign in and can change it under **Account**.
+
+If someone isn’t on the Team list, the database refuses to create a login for them, even if the sign-up setting is left on.
 
 | Permission | Allows |
 |---|---|

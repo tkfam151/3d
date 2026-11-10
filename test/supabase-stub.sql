@@ -11,7 +11,7 @@ alter default privileges in schema public grant execute on functions to anon, au
 
 create schema auth;
 grant usage on schema auth to anon, authenticated;
-create table auth.users (id uuid primary key default gen_random_uuid(), email text, raw_user_meta_data jsonb default '{}');
+create table auth.users (id uuid primary key default gen_random_uuid(), email text, raw_user_meta_data jsonb default '{}', created_at timestamptz default clock_timestamp());
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 

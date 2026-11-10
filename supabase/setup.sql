@@ -15,8 +15,8 @@ create table if not exists public.admins (
   created_at  timestamptz not null default now()
 );
 
--- Someone invited to be an admin. When they create an account with this
--- email on the admin page, they become an admin with these permissions.
+-- Someone the owner added under Team. When the owner creates their login in
+-- Supabase (Authentication → Users → Add user), they become an admin with these permissions.
 create table if not exists public.admin_invites (
   email       text primary key,
   name        text not null,
@@ -483,8 +483,11 @@ begin
   delete from public.admins where id = p_id;
 end $$;
 
--- New account on the admin page: the very first one becomes the owner (all
--- permissions); after that, only invited emails become admins.
+-- Accounts are CLOSED. A new login is only allowed when:
+--   * there are no admins yet (the very first account becomes the owner), or
+--   * the owner added that email under Team → Add admin.
+-- Anything else is rejected, so nobody can create an account by themselves.
+-- The owner creates logins in Supabase → Authentication → Users → Add user.
 create or replace function public.pd_on_signup() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare inv public.admin_invites;
@@ -496,13 +499,23 @@ begin
     return new;
   end if;
   select * into inv from public.admin_invites where email = lower(new.email);
-  if inv.email is not null then
-    insert into public.admins (id, name, email, scopes) values (new.id, inv.name, lower(new.email), inv.scopes)
-    on conflict do nothing;
-    delete from public.admin_invites where email = inv.email;
+  if inv.email is null then
+    raise exception 'Sign-ups are closed. Ask the Print Desk owner to add you.' using errcode = '42501';
   end if;
+  insert into public.admins (id, name, email, scopes) values (new.id, inv.name, lower(new.email), inv.scopes)
+  on conflict do nothing;
+  delete from public.admin_invites where email = inv.email;
   return new;
 end $$;
+
+-- If accounts were made before this script was run, nobody is an admin yet:
+-- make the earliest account (the owner's) the owner.
+insert into public.admins (id, name, email, scopes)
+select u.id, coalesce(nullif(trim(u.raw_user_meta_data ->> 'name'), ''), split_part(u.email, '@', 1)), lower(u.email), public.pd_all_scopes()
+from auth.users u
+where not exists (select 1 from public.admins)
+order by u.created_at
+limit 1;
 
 drop trigger if exists pd_on_signup on auth.users;
 create trigger pd_on_signup after insert on auth.users
@@ -564,4 +577,5 @@ with check (
   and lower(storage.extension(name)) in ('png', 'jpg', 'jpeg', 'webp', 'gif')
 );
 
--- Done! Next: Authentication → URL Configuration → set Site URL to your GitHub Pages address.
+-- Done! Next: Authentication → URL Configuration → set Site URL to your GitHub Pages admin page,
+-- and Authentication → Sign In / Providers → turn OFF "Allow new users to sign up".

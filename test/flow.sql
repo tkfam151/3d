@@ -12,9 +12,16 @@ grant usage on schema t to anon, authenticated;
 
 -- Accounts: the first sign-up becomes the owner; later ones only if invited.
 insert into auth.users (id, email, raw_user_meta_data) values ('00000000-0000-0000-0000-00000000000a', 'Sam@School.org', '{"name":"Sam Admin"}');
-insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000b', 'stranger@evil.com');
 select t.ok((select scopes = pd_all_scopes() and name = 'Sam Admin' from admins where email = 'sam@school.org'), 'first sign-up is owner with all permissions');
-select t.ok(not exists (select 1 from admins where email = 'stranger@evil.com'), 'uninvited sign-up gets no admin access');
+do $$ begin
+  insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000d', 'stranger@evil.com');
+  raise exception 'no error';
+exception when others then if sqlerrm not like '%Sign-ups are closed%' then raise; end if; end $$;
+select t.ok(not exists (select 1 from auth.users where email = 'stranger@evil.com'), 'uninvited sign-up is rejected (account not created)');
+-- An account created before setup.sql existed (trigger bypassed) to test adding existing accounts.
+alter table auth.users disable trigger pd_on_signup;
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000b', 'legacy@school.org');
+alter table auth.users enable trigger pd_on_signup;
 
 -- ===== teacher (anon) =====
 set role anon;
@@ -118,7 +125,7 @@ select t.ok(not exists (select 1 from email_log where event_id = :ev3), 'email m
 
 -- ===== team & permissions =====
 select t.ok(admin_invite('pat@school.org', 'Pat Helper', array['orders:read', 'pickups:write', 'bogus']) = 'invited', 'invited Pat');
-select t.ok(admin_invite('stranger@evil.com', 'Stranger', array['orders:read']) = 'added', 'existing account added directly');
+select t.ok(admin_invite('legacy@school.org', 'Legacy', array['orders:read']) = 'added', 'existing account added directly');
 reset role;
 insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000c', 'pat@school.org');
 select t.ok((select scopes = array['orders:read', 'pickups:write'] from admins where email = 'pat@school.org'), 'invite applied on sign-up, bogus scope dropped');
