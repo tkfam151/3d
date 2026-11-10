@@ -1,5 +1,5 @@
 import { $, h, fill, busy, toast, pill, ago, fmtDate, fmtDay, fmtTime, fmtSize, byDay, STATUS, LOGO } from './common.js';
-import { sb, config, configured, rpc, rows, fileUrl, uploadFile, safeName, setupNotice } from './db.js';
+import { sb, config, configured, rpc, rows, fileUrl, uploadFile, safeName, setupNotice, inviteAdmin } from './db.js';
 
 $('#brand').insertAdjacentHTML('afterbegin', LOGO);
 $('#brand').lastChild.textContent = config.SITE_NAME;
@@ -18,6 +18,8 @@ let me = null; // { id, name, email, scopes }
 const can = (scope) => Boolean(me?.scopes.includes(scope));
 const fail = (err) => toast(err.message, { error: true });
 // This page's clean address (no ?query or #hash), used in email links and Supabase redirects.
+// Arrived by clicking an activation / sign-in email link? Then ask them to choose a password.
+const fromEmailLink = /type=(magiclink|signup|invite)/.test(window.PD_ARRIVED_FROM || '');
 const pageUrl = () => location.origin + location.pathname.replace(/\/docs\/admin\.html$/, '/admin.html');
 
 // ================= sign in =================
@@ -28,8 +30,10 @@ async function start() {
     if (event === 'SIGNED_OUT') { me = null; $('#tabs').hidden = true; showLogin(); }
   });
   const { data } = await sb.auth.getSession();
-  if (data.session) await loadMe(data.session.user);
-  else showLogin();
+  if (data.session && fromEmailLink) showNewPassword(true);
+  else if (data.session) await loadMe(data.session.user);
+  else showLogin(/error_description=/.test(window.PD_ARRIVED_FROM || '')
+    ? 'That email link has expired or was already used. Ask the owner to send a new one.' : null);
 }
 
 async function loadMe(user) {
@@ -55,7 +59,9 @@ function authError(err) {
   if (/invalid login credentials/i.test(m)) return 'Incorrect email or password.';
   if (/email not confirmed/i.test(m)) return 'Please confirm your email first — check your inbox for the link.';
   if (/already registered/i.test(m)) return 'There’s already an account with that email. Try signing in.';
-  if (/rate limit/i.test(m)) return 'Too many attempts. Please wait a minute and try again.';
+  if (/signups? not allowed/i.test(m)) return 'Supabase has sign-ups turned off. Turn on “Allow new users to sign up” (Authentication → Sign In / Providers). Strangers still can’t join — only people on your Team list.';
+  if (/database error saving new user/i.test(m)) return 'That email isn’t on the Team list, so it can’t have an account.';
+  if (/rate limit|too many/i.test(m)) return 'Supabase’s email limit was reached. Wait a while, or connect your own email sender (see the README).';
   return m || 'Something went wrong.';
 }
 
@@ -91,11 +97,12 @@ function showLogin(message) {
   setTimeout(() => email.focus(), 50);
 }
 
-function showNewPassword() {
+function showNewPassword(welcome = false) {
   const pw = h('input.input', { type: 'password', autocomplete: 'new-password', placeholder: 'New password (10+ characters)' });
   const err = h('div.form-error', { hidden: true });
   const submit = h('button.btn.block', { type: 'submit' }, 'Save new password');
-  authShell('Choose a new password', '', h('form', { onsubmit: (e) => {
+  authShell(welcome ? 'Welcome! Choose a password' : 'Choose a new password',
+    welcome ? 'Your account is active. Pick a password to sign in with from now on.' : '', h('form', { onsubmit: (e) => {
     e.preventDefault();
     busy(submit, async () => {
       if (pw.value.length < 10) { err.textContent = 'Use at least 10 characters.'; err.hidden = false; return; }
@@ -576,6 +583,10 @@ async function viewSchedule(root) {
     for (const r of await rows(sb.from('requests').select('pickup_slot').eq('status', 'scheduled'))) booked[r.pickup_slot] = (booked[r.pickup_slot] || 0) + 1;
   }
   const upcoming = slots.filter((s) => Date.parse(s.ends_at) > Date.now()).map((s) => ({ ...s, start: s.starts_at, end: s.ends_at, booked: booked[s.id] || 0 }));
+  // Teachers only see one week at a time (Mon–Sun; on weekends, the coming week).
+  const week = await rpc('booking_week');
+  const inWeek = (iso) => Date.parse(iso) >= Date.parse(week.start) && Date.parse(iso) < Date.parse(week.end);
+  const weekLabel = `${fmtDay(week.start)} – ${fmtDay(new Date(Date.parse(week.end) - 1).toISOString())}`;
   const editable = can('schedule:write');
 
   const today = new Date();
@@ -621,7 +632,7 @@ async function viewSchedule(root) {
   const addBtn = h('button.btn.block', { onclick: (e) => busy(e.currentTarget, async () => {
     try {
       const locations = locs.map((c) => c.querySelector('input')).filter((i) => i.checked).map((i) => i.value);
-      const n = await rpc('admin_add_slots', { p_slots: build(), p_locations: locations, p_capacity: Number(f.capacity.value) });
+      const n = await rpc('admin_add_slots', { p_slots: build(), p_locations: locations, p_capacity: Number(f.capacity.value), p_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
       toast(`Added ${n} pickup time${n === 1 ? '' : 's'}`);
       viewSchedule(root);
     } catch (err) { fail(err); }
@@ -641,7 +652,7 @@ async function viewSchedule(root) {
   const list = h('div.card',
     h('div.card-head', h('div.h3', 'Upcoming'), h('span.muted.small', `${upcoming.length} time${upcoming.length === 1 ? '' : 's'}`)),
     upcoming.length ? byDay(upcoming).map((day) => h('div.day',
-      h('div.day-label', fmtDay(day[0].start)),
+      h('div.day-label', fmtDay(day[0].start), ' ', inWeek(day[0].start) ? h('span.pill.green', { style: { marginLeft: '6px' } }, 'Teachers can see') : h('span.tag', { style: { marginLeft: '6px' } }, 'Opens later')),
       h('div.list', { style: { boxShadow: 'none', background: 'var(--bg-sunken)' } }, day.map((s) => h('div.list-row.static',
         h('div', h('div.ttl', `${fmtTime(s.start)} – ${fmtTime(s.end)}`), h('div.sub', `${s.locations.join(' · ')} · ${s.booked}/${s.capacity} booked`)),
         editable ? h('button.btn.plain.sm', { style: { color: 'var(--red)' }, disabled: s.booked > 0, title: s.booked ? 'Booked — can’t remove' : '', onclick: (e) => busy(e.currentTarget, async () => {
@@ -652,7 +663,9 @@ async function viewSchedule(root) {
   );
 
   fill(root,
-    head('Pickup times', `Teachers choose from these when their print is ready (${config.LOCATIONS.join(' or ')}).`),
+    head('Pickup times', `Add as many weeks as you like — teachers only see one week at a time (${config.LOCATIONS.join(' or ')}).`),
+    h('div.callout', { style: { marginBottom: '20px' } }, h('span.ci', '🗓'), h('div.small', h('b', 'Teachers can book now: '), weekLabel,
+      '. Each Monday the next week opens automatically (on weekends, teachers already see the coming week).')),
     h('div.grid-2', editable ? form : noScope('schedule:write'), list),
   );
 }
@@ -668,37 +681,49 @@ async function viewTeam(root) {
     h('label.check', h('input', { type: 'checkbox', value: k, checked: selected.includes(k) }), h('div', h('code', k), h('div.d', d)))));
   const picked = (el) => [...el.querySelectorAll('input:checked')].map((i) => i.value);
 
-  // Supabase dashboard page where the owner creates logins.
+  // Fallback if email can't be sent: the owner can still create the login by hand.
   const usersPage = `https://supabase.com/dashboard/project/${new URL(config.SUPABASE_URL).hostname.split('.')[0]}/auth/users`;
-  const loginSteps = (email) => h('ol.small', { style: { margin: '0 0 6px', paddingLeft: '20px', lineHeight: 1.7 } },
-    h('li', 'Open ', h('a', { href: usersPage, target: '_blank', rel: 'noopener' }, 'Supabase → Authentication → Users ↗')),
-    h('li', 'Click ', h('b', 'Add user'), ' → ', h('b', 'Create new user')),
-    h('li', 'Email: ', h('b', email), ', choose a password, keep ', h('b', 'Auto Confirm User'), ' ticked → ', h('b', 'Create user')),
-    h('li', 'Send them the password privately. They sign in at ', h('b', pageUrl()), ' and can change it under Account.'));
+  const emailFailed = (who, err) => h('div.callout.orange', { style: { marginBottom: '14px' } }, h('span.ci', '⚠️'), h('div.small',
+    h('b', `Couldn’t email ${who}: `), err.message, ' ',
+    'You can try again later from the Team list, or create their login in ', h('a', { href: usersPage, target: '_blank', rel: 'noopener' }, 'Supabase → Authentication → Users ↗'), '.'));
+  // Not activated yet → send Supabase's invitation again. Already active → a password-reset email.
+  const sendAgain = (email, name, activated) => async (e) => busy(e.currentTarget, async () => {
+    try {
+      if (activated) {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: pageUrl() });
+        if (error) throw new Error(authError(error));
+        toast(`Password-reset email sent to ${email}`);
+      } else {
+        await inviteAdmin(email, { name, redirectTo: pageUrl() });
+        toast(`Invitation sent to ${email}`);
+      }
+    } catch (err) { fail(err); }
+  });
 
   const invite = () => {
     const name = h('input.input', { placeholder: 'Full name' });
     const email = h('input.input', { type: 'email', placeholder: 'Email' });
     const scopes = scopeChecks(['orders:read', 'orders:write', 'pickups:write']);
     const m = modal('Add admin', h('div',
-      h('p.muted.small', { style: { marginTop: 0 } }, 'Only people you add here can have an account. Nobody can sign up by themselves.'),
+      h('p.muted.small', { style: { marginTop: 0 } }, 'Supabase emails them an invitation. They click it, choose a password, and they’re in. Only people you add here can have an account.'),
       h('label.field', name), h('label.field', email),
       h('label.field', h('span', 'Permissions'), scopes),
       h('button.btn.block', { onclick: (e) => busy(e.currentTarget, async () => {
+        const em = email.value.trim();
+        const nm = name.value.trim();
         try {
-          const em = email.value.trim();
-          const r = await rpc('admin_invite', { p_email: em, p_name: name.value, p_scopes: picked(scopes) });
-          fill(m.body,
-            h('div.callout.green', { style: { marginBottom: '14px' } }, h('span.ci', '✓'), h('div', r === 'added'
-              ? `${name.value.trim()} already had a login, so they’re an admin now.`
-              : `${name.value.trim()} is approved. One more step — create their login:`)),
-            r === 'added' ? null : loginSteps(em),
-            h('div.btn-row', { style: { marginTop: '14px' } },
-              r === 'added' ? null : h('a.btn', { href: usersPage, target: '_blank', rel: 'noopener' }, 'Open Supabase Users ↗'),
-              h('button.btn.secondary', { onclick: () => m.close() }, 'Done')));
-          viewTeam(root);
-        } catch (err) { fail(err); }
-      }) }, 'Add admin'),
+          await rpc('admin_invite', { p_email: em, p_name: nm, p_scopes: picked(scopes) });
+        } catch (err) { fail(err); return; }
+        let sent = null;
+        try { await inviteAdmin(em, { name: nm, redirectTo: pageUrl() }); sent = true; } catch (err) { sent = err; }
+        fill(m.body,
+          sent === true
+            ? h('div.callout.green', { style: { marginBottom: '14px' } }, h('span.ci', '✉️'), h('div',
+                h('b', `${nm} is invited.`), ` Supabase emailed ${em} an invitation. They click it, choose a password, and they’re in. If it expires, resend it from the Team list.`))
+            : emailFailed(em, sent),
+          h('div.btn-row', h('button.btn.secondary', { onclick: () => m.close() }, 'Done')));
+        viewTeam(root);
+      }) }, 'Add admin & send invitation'),
     ));
   };
 
@@ -716,6 +741,8 @@ async function viewTeam(root) {
             viewTeam(root);
           } catch (err) { fail(err); }
         }) }, 'Save'),
+        a.id !== me.id ? h('button.btn.secondary', { title: 'If they haven’t accepted their invitation yet', onclick: sendAgain(a.email, a.name, false) }, 'Resend invitation') : null,
+        a.id !== me.id ? h('button.btn.secondary', { title: 'If they forgot their password', onclick: sendAgain(a.email, a.name, true) }, 'Send password reset') : null,
         a.id !== me.id ? h('button.btn.danger', { onclick: (e) => busy(e.currentTarget, async () => {
           if (!confirm(`Remove ${a.name}? They lose admin access immediately.`)) return;
           try { await rpc('admin_remove', { p_id: a.id }); m.close(); toast('Removed'); viewTeam(root); } catch (err) { fail(err); }
@@ -736,11 +763,12 @@ async function viewTeam(root) {
       scopeTags(a.scopes),
     ))),
     invites.length ? [
-      h('div.h3', { style: { margin: '28px 0 10px' } }, 'Waiting for a login'),
-      h('div.list', invites.map((i) => h('div.list-row.static', { style: { gridTemplateColumns: '44px 1fr auto auto' } },
+      h('div.h3', { style: { margin: '28px 0 10px' } }, 'Invitation not sent yet'),
+      h('div.list', invites.map((i) => h('div.list-row.static', { style: { gridTemplateColumns: '44px 1fr auto auto auto' } },
         avatar(i.name, true),
-        h('div', { style: { minWidth: 0 } }, h('div.ttl', i.name), h('div.sub', `${i.email} · create their login in Supabase → Authentication → Users`)),
+        h('div', { style: { minWidth: 0 } }, h('div.ttl', i.name), h('div.sub', `${i.email} · added, but the invitation email didn’t go out`)),
         scopeTags(i.scopes),
+        editable ? h('button.btn.plain.sm', { onclick: sendAgain(i.email, i.name, false) }, 'Send invitation') : null,
         editable ? h('button.btn.plain.sm', { style: { color: 'var(--red)' }, onclick: (e) => busy(e.currentTarget, async () => {
           try { await rpc('admin_cancel_invite', { p_email: i.email }); viewTeam(root); } catch (err) { fail(err); }
         }) }, 'Cancel') : null,

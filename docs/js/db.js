@@ -14,6 +14,24 @@ function friendly(error) {
   return new Error(m || 'Something went wrong. Please try again.');
 }
 
+/**
+ * Ask Supabase to send its invitation email (via the invite-admin Edge Function,
+ * which holds the secret key — see supabase/functions/invite-admin). The person
+ * must already be on the Team list. Their link opens the admin page to set a password.
+ */
+export async function inviteAdmin(email, { name, redirectTo } = {}) {
+  const { error } = await sb.functions.invoke('invite-admin', { body: { email, name, redirectTo } });
+  if (!error) return;
+  const res = error.context;
+  let msg = '';
+  if (res && typeof res.json === 'function') {
+    if (res.status === 404) msg = 'The invite-admin function isn’t set up in Supabase yet (see the README, step “Invitation emails”).';
+    else { try { msg = (await res.json()).error || ''; } catch { /* not JSON */ } }
+  }
+  if (!msg && /failed to send a request|fetch/i.test(error.message)) msg = 'Couldn’t reach the invite-admin function. Is it deployed in Supabase (see the README)?';
+  throw new Error(msg || error.message || 'Couldn’t send the invitation.');
+}
+
 /** Call a database function (see supabase/setup.sql). Throws a readable Error. */
 export async function rpc(name, args) {
   const { data, error } = await sb.rpc(name, args);

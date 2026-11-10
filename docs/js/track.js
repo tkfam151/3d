@@ -131,7 +131,7 @@ function pickupCard(o) {
 async function buildPicker(el, o) {
   fill(el, h('div.empty', h('span.spinner')));
   let data;
-  try { data = { locations: config.LOCATIONS, slots: await rpc('open_slots', { p_token: token }) }; } catch (err) { fill(el, h('p.form-error', err.message)); return; }
+  try { const r = await rpc('open_slots', { p_token: token }); data = { locations: config.LOCATIONS, slots: r.slots, week: r.week }; } catch (err) { fill(el, h('p.form-error', err.message)); return; }
 
   let location = o.pickup?.location || data.locations[0];
   let slotId = o.pickup?.slotId || null;
@@ -143,7 +143,7 @@ async function buildPicker(el, o) {
     fill(seg, ...data.locations.map((loc) => h('button', { type: 'button', 'aria-pressed': String(loc === location), onclick: () => { location = loc; slotId = null; draw(); } }, loc)));
     const slots = data.slots.filter((s) => s.locations.includes(location));
     if (!slots.length) {
-      fill(list, h('div.empty', { style: { padding: '24px 0' } }, h('p', { style: { margin: 0 } }, `No pickup times are open at ${location} yet.`), h('p.small', 'Check back soon — or try the other location.')));
+      fill(list, h('div.empty', { style: { padding: '24px 0' } }, h('p', { style: { margin: 0 } }, `No pickup times are open at ${location} this week.`), h('p.small', 'Try the other location, or check back — each week’s times open on Monday.')));
     } else {
       fill(list, ...byDay(slots).map((day) => h('div.day',
         h('div.day-label', fmtDay(day[0].start)),
@@ -163,7 +163,10 @@ async function buildPicker(el, o) {
     } catch (err) { toast(err.message, { error: true }); buildPicker(el, o); }
   });
   draw();
-  fill(el, h('div.field', h('span', 'Pickup location'), seg), list, confirm);
+  const weekEnd = new Date(Date.parse(data.week.end) - 1);
+  fill(el, h('div.field', h('span', 'Pickup location'), seg),
+    h('p.muted.small', { style: { margin: '0 0 0 4px' } }, `Times for the week of ${fmtDay(data.week.start)} – ${weekEnd.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`),
+    list, confirm);
 }
 
 // ---------- hand-off confirmation ----------

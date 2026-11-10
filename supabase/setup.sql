@@ -102,6 +102,13 @@ create table if not exists public.email_log (
   created_at  timestamptz not null default now()
 );
 
+-- Site settings (currently just the school's time zone, saved from the
+-- admin's browser when they add pickup times).
+create table if not exists public.settings (
+  key    text primary key,
+  value  text not null
+);
+
 -- ---------- helpers ---------------------------------------------------
 
 create or replace function public.pd_all_scopes() returns text[]
@@ -178,6 +185,26 @@ language sql stable security definer set search_path = public as $$
   select count(*)::int from public.requests where pickup_slot = p_slot and status = 'scheduled'
 $$;
 
+create or replace function public.pd_tz() returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce((select value from public.settings where key = 'timezone'), 'UTC')
+$$;
+
+-- Teachers can book one week at a time: Monday–Sunday in the school's time
+-- zone. On Saturday and Sunday the school week is over, so the coming week opens.
+-- Admins can add many weeks of times at once; each week appears on its own.
+create or replace function public.pd_booking_window(out starts timestamptz, out ends timestamptz)
+language sql stable security definer set search_path = public as $$
+  with local as (select now() at time zone public.pd_tz() as t),
+       monday as (select date_trunc('week', t) + case when extract(isodow from t) >= 6 then interval '7 days' else interval '0' end as d from local)
+  select d at time zone public.pd_tz(), (d + interval '7 days') at time zone public.pd_tz() from monday
+$$;
+
+create or replace function public.booking_week() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('start', w.starts, 'end', w.ends, 'timezone', public.pd_tz()) from public.pd_booking_window() w
+$$;
+
 -- ---------- teacher actions (no sign-in; the secret tracking link is the key) ----------
 
 create or replace function public.submit_request(p jsonb) returns jsonb
@@ -246,15 +273,23 @@ begin
   return public.pd_teacher_view(r);
 end $$;
 
+-- Returns { week: {start, end}, slots: [...] } — only this week's open times
+-- (plus the teacher's own booking, so they can see it while rescheduling).
 create or replace function public.open_slots(p_token text) returns jsonb
 language sql stable security definer set search_path = public as $$
-  with r as (select * from public.pd_by_token(p_token))
-  select coalesce(jsonb_agg(jsonb_build_object(
-           'id', s.id, 'start', s.starts_at, 'end', s.ends_at, 'locations', s.locations,
-           'remaining', greatest(0, s.capacity - public.pd_booked(s.id))) order by s.starts_at), '[]'::jsonb)
-  from public.slots s, r
-  where s.starts_at > now()
-    and (public.pd_booked(s.id) < s.capacity or s.id = r.pickup_slot)
+  with r as (select * from public.pd_by_token(p_token)),
+       w as (select * from public.pd_booking_window())
+  select jsonb_build_object(
+    'week', (select jsonb_build_object('start', w.starts, 'end', w.ends) from w),
+    'slots', coalesce(jsonb_agg(jsonb_build_object(
+               'id', s.id, 'start', s.starts_at, 'end', s.ends_at, 'locations', s.locations,
+               'remaining', greatest(0, s.capacity - public.pd_booked(s.id))) order by s.starts_at)
+             filter (where s.id is not null), '[]'::jsonb))
+  from r cross join w
+  left join public.slots s
+    on s.starts_at > now()
+   and ((s.starts_at >= w.starts and s.starts_at < w.ends and public.pd_booked(s.id) < s.capacity)
+        or s.id = r.pickup_slot)
 $$;
 
 create or replace function public.book_pickup(p_token text, p_slot uuid, p_location text) returns jsonb
@@ -268,6 +303,10 @@ begin
   if s.id is null then raise exception 'Please choose a pickup time.'; end if;
   if not (p_location = any (s.locations)) then raise exception 'That time isn’t available at %.', p_location; end if;
   if s.starts_at <= now() then raise exception 'That time has already passed.'; end if;
+  if s.id is distinct from r.pickup_slot
+     and not exists (select 1 from public.pd_booking_window() w where s.starts_at >= w.starts and s.starts_at < w.ends) then
+    raise exception 'That time isn’t open for booking yet. Please pick a time this week.';
+  end if;
   if not (r.status = 'scheduled' and r.pickup_slot = s.id) and public.pd_booked(s.id) >= s.capacity then
     raise exception 'Sorry — that time just filled up. Please pick another.';
   end if;
@@ -403,15 +442,21 @@ begin
 end $$;
 
 -- p_slots: [{"start": "...", "end": "..."}, ...]
-create or replace function public.admin_add_slots(p_slots jsonb, p_locations text[], p_capacity int) returns int
+drop function if exists public.admin_add_slots(jsonb, text[], int);
+create or replace function public.admin_add_slots(p_slots jsonb, p_locations text[], p_capacity int, p_timezone text default null) returns int
 language plpgsql security definer set search_path = public as $$
 declare
   a public.admins := public.pd_require('schedule:write');
   n int;
 begin
+  -- The admin's browser time zone defines the school week teachers see.
+  if p_timezone is not null and exists (select 1 from pg_timezone_names where name = p_timezone) then
+    insert into public.settings (key, value) values ('timezone', p_timezone)
+    on conflict (key) do update set value = excluded.value;
+  end if;
   if coalesce(array_length(p_locations, 1), 0) = 0 then raise exception 'Choose at least one location.'; end if;
   if jsonb_typeof(p_slots) <> 'array' or jsonb_array_length(p_slots) = 0 then raise exception 'Add at least one time.'; end if;
-  if jsonb_array_length(p_slots) > 300 then raise exception 'That’s too many times at once.'; end if;
+  if jsonb_array_length(p_slots) > 1000 then raise exception 'That’s too many times at once — try fewer weeks.'; end if;
   if exists (select 1 from jsonb_array_elements(p_slots) x where (x ->> 'end')::timestamptz <= (x ->> 'start')::timestamptz) then
     raise exception 'Each time needs a start before its end.';
   end if;
@@ -487,7 +532,8 @@ end $$;
 --   * there are no admins yet (the very first account becomes the owner), or
 --   * the owner added that email under Team → Add admin.
 -- Anything else is rejected, so nobody can create an account by themselves.
--- The owner creates logins in Supabase → Authentication → Users → Add user.
+-- Helpers get logins via Team → Add admin, which asks Supabase to send its
+-- invitation email (supabase/functions/invite-admin).
 create or replace function public.pd_on_signup() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare inv public.admin_invites;
@@ -530,6 +576,7 @@ alter table public.requests      enable row level security;
 alter table public.previews      enable row level security;
 alter table public.events        enable row level security;
 alter table public.email_log     enable row level security;
+alter table public.settings      enable row level security;
 
 drop policy if exists "pd read" on public.admins;
 create policy "pd read" on public.admins for select to authenticated using (public.pd_is_admin());
@@ -545,6 +592,8 @@ drop policy if exists "pd read" on public.events;
 create policy "pd read" on public.events for select to authenticated using (public.has_scope('orders:read'));
 drop policy if exists "pd read" on public.email_log;
 create policy "pd read" on public.email_log for select to authenticated using (public.has_scope('orders:read'));
+drop policy if exists "pd read" on public.settings;
+create policy "pd read" on public.settings for select to authenticated using (public.pd_is_admin());
 
 -- Internal helpers shouldn't be callable from the browser.
 revoke execute on function public.pd_claim(public.requests, public.admins) from public, anon, authenticated;
@@ -578,4 +627,5 @@ with check (
 );
 
 -- Done! Next: Authentication → URL Configuration → set Site URL to your GitHub Pages admin page,
--- and Authentication → Sign In / Providers → turn OFF "Allow new users to sign up".
+-- Authentication → Sign In / Providers → turn OFF "Allow new users to sign up",
+-- and deploy supabase/functions/invite-admin (Edge Functions) for invitation emails.

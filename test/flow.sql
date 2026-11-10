@@ -9,6 +9,10 @@ create schema t;
 create function t.ok(cond boolean, msg text) returns void language plpgsql as $$
 begin if not coalesce(cond, false) then raise exception 'FAILED: %', msg; end if; raise notice 'ok - %', msg; end $$;
 grant usage on schema t to anon, authenticated;
+-- A future time inside the week teachers can currently book.
+create function t.in_week() returns timestamptz language sql as $$
+  select greatest(now(), w.starts) + interval '5 minutes' from public.pd_booking_window() w $$;
+grant execute on function t.in_week() to anon, authenticated;
 
 -- Accounts: the first sign-up becomes the owner; later ones only if invited.
 insert into auth.users (id, email, raw_user_meta_data) values ('00000000-0000-0000-0000-00000000000a', 'Sam@School.org', '{"name":"Sam Admin"}');
@@ -79,16 +83,24 @@ select admin_set_status((select id from requests where number = 1001), 'printed'
 select t.ok((select status from requests where number = 1001) = 'printed', 'STL printing → printed');
 
 select admin_add_slots(jsonb_build_array(
-  jsonb_build_object('start', now() + interval '1 day', 'end', now() + interval '1 day 30 min'),
-  jsonb_build_object('start', now() - interval '1 day', 'end', now() - interval '23 hours')), array['PU3'], 1) as n \gset
-select t.ok(:n = 2, 'added pickup times');
-select id as slot from slots where starts_at > now() \gset
+  jsonb_build_object('start', t.in_week(), 'end', t.in_week() + interval '30 min'),
+  jsonb_build_object('start', now() - interval '1 day', 'end', now() - interval '23 hours'),
+  jsonb_build_object('start', (select ends from pd_booking_window()) + interval '1 day', 'end', (select ends from pd_booking_window()) + interval '1 day 30 min')),
+  array['PU3'], 1, 'America/New_York') as n \gset
+select t.ok(:n = 3, 'added pickup times (this week, past, next week)');
+select t.ok((select value from settings where key = 'timezone') = 'America/New_York', 'school time zone saved from admin');
+select id as slot from slots where starts_at > now() and starts_at < (select ends from pd_booking_window()) \gset
 select id as oldslot from slots where starts_at < now() \gset
+select id as nextslot from slots where starts_at >= (select ends from pd_booking_window()) \gset
 reset role;
 
 -- ===== teacher books & approves =====
 set role anon;
-select t.ok(jsonb_array_length(open_slots('tok_aaaaaaaaaaaaaaaaaaaaaaaa')) = 1, 'teacher sees only future open times');
+select t.ok(jsonb_array_length(open_slots('tok_aaaaaaaaaaaaaaaaaaaaaaaa') -> 'slots') = 1, 'teacher sees only this week''s future times (not past, not next week)');
+select set_config('pd.nextslot', :'nextslot', false);
+do $$ begin perform book_pickup('tok_aaaaaaaaaaaaaaaaaaaaaaaa', current_setting('pd.nextslot')::uuid, 'PU3'); raise exception 'no error';
+exception when others then if sqlerrm not like '%isn’t open for booking yet%' then raise; end if; end $$;
+select t.ok(true, 'next week''s time cannot be booked yet');
 do $$ begin perform book_pickup('tok_aaaaaaaaaaaaaaaaaaaaaaaa', (select gen_random_uuid()), 'PU3'); raise exception 'no error';
 exception when others then if sqlerrm not like '%choose a pickup time%' then raise; end if; end $$;
 select t.ok(true, 'bad slot rejected');
@@ -102,7 +114,8 @@ exception when others then if sqlerrm not like '%already passed%' then raise; en
 select t.ok(true, 'past time rejected');
 select t.ok((book_pickup('tok_aaaaaaaaaaaaaaaaaaaaaaaa', :'slot', 'PU3') -> 'pickup' ->> 'location') = 'PU3', 'booked PU3');
 select t.ok((book_pickup('tok_aaaaaaaaaaaaaaaaaaaaaaaa', :'slot', 'PU3') ->> 'status') = 'scheduled', 'rebooking own slot ok');
-select t.ok(jsonb_array_length(open_slots('tok_cccccccccccccccccccccccc')) = 0, 'full time hidden from others');
+select t.ok(jsonb_array_length(open_slots('tok_cccccccccccccccccccccccc') -> 'slots') = 0, 'full time hidden from others');
+select t.ok((open_slots('tok_aaaaaaaaaaaaaaaaaaaaaaaa') -> 'slots' -> 0 ->> 'id') = :'slot', 'own booking still listed');
 do $$ begin perform book_pickup('tok_cccccccccccccccccccccccc', current_setting('pd.slot')::uuid, 'PU3'); raise exception 'no error';
 exception when others then if sqlerrm not like '%once printing is finished%' then raise; end if; end $$;
 select t.ok(true, 'cannot book before printed');
