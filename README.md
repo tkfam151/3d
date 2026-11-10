@@ -35,7 +35,19 @@ From a password sign-in, an admin can create **personal access tokens** (Tokens 
 
 Passwords are hashed with scrypt; sign-in attempts are rate-limited.
 
-## Run it
+## Put it online (Render)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tkfam151/3d)
+
+1. Click the button (or in Render: **New → Blueprint** and pick this repo). Sign in with GitHub and allow Render to see `tkfam151/3d`.
+2. Click **Deploy Blueprint**. It uses the Starter plan with a 1 GB disk (about $7/month) so requests and uploaded files survive restarts.
+3. When it says **Live**, open the link (like `https://print-desk.onrender.com`). That's the site for teachers.
+4. In Render, open **print-desk → Environment** and copy `SETUP_CODE`. Go to `/admin` on your site and create the first admin with that code.
+5. In **Pickup times**, add some times, then share the link with teachers.
+
+Every push to GitHub redeploys automatically. Using your own domain? Add it under **Settings → Custom Domains** and set `BASE_URL` to it so email links use it.
+
+## Run it locally
 
 Requires Node.js 18+ (20.12+ to auto-load `.env`).
 
