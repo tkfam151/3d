@@ -216,6 +216,7 @@ declare
   fp    text := nullif(p ->> 'file_path', '');
   em    text := lower(trim(coalesce(p ->> 'email', '')));
   fsize bigint;
+  cooldown_until timestamptz;
 begin
   if t is null or t !~ '^[A-Za-z0-9_-]{24,64}$' then raise exception 'Something went wrong. Please refresh the page and try again.'; end if;
   if trim(coalesce(p ->> 'teacher_name', '')) = '' then raise exception 'Please add your name.'; end if;
@@ -233,6 +234,23 @@ begin
     if trim(coalesce(p ->> 'description', '')) = '' then raise exception 'Please describe what you’d like printed.'; end if;
     fp := null;
   end if;
+
+  -- Cooldown (issue #1): one request at a time per email, and a week's wait
+  -- after a print finishes before the same email can send another.
+  select * into r from public.requests
+   where email = em and status not in ('picked_up', 'cancelled')
+   order by created_at limit 1;
+  if r.id is not null then
+    raise exception 'You already have a request in progress (#%). You can send a new one a week after it finishes printing.', r.number;
+  end if;
+  select coalesce(max(e.created_at), '-infinity') + interval '7 days' into cooldown_until
+    from public.events e join public.requests q on q.id = e.request_id
+   where q.email = em and e.status = 'printed';
+  if cooldown_until > now() then
+    raise exception 'Your last print finished recently. You can send a new request on %.',
+      to_char(cooldown_until at time zone public.pd_tz(), 'FMDay, FMMonth FMDD "at" FMHH12:MI AM');
+  end if;
+  r := null;
 
   insert into public.requests (track_token, type, teacher_name, email, title, notes, color, description, file_path, file_name, file_size)
   values (t, typ,

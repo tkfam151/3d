@@ -53,6 +53,11 @@ select t.ok(true, 'file must be in the request''s own folder');
 select t.ok((submit_request('{"track_token":"tok_aaaaaaaaaaaaaaaaaaaaaaaa","type":"file","teacher_name":"Ms. Rivera","email":"Rivera@School.org","title":"Gear","file_path":"tok_aaaaaaaaaaaaaaaaaaaaaaaa/gear.stl","file_name":"gear.stl"}') ->> 'number') = '1001', 'STL request submitted as #1001');
 select t.ok((get_request('tok_aaaaaaaaaaaaaaaaaaaaaaaa') -> 'file' ->> 'size') = '1234', 'tracking page sees file + size');
 select t.ok((get_request('tok_aaaaaaaaaaaaaaaaaaaaaaaa') ->> 'email') = 'rivera@school.org', 'email lower-cased');
+do $$ begin
+  perform submit_request('{"track_token":"tok_dddddddddddddddddddddddd","type":"idea","teacher_name":"Ms. Rivera","email":"rivera@school.org","title":"Second","description":"x"}');
+  raise exception 'no error';
+exception when others then if sqlerrm not like '%already have a request in progress (#1001)%' then raise; end if; end $$;
+select t.ok(true, 'cooldown: one open request per email');
 select t.ok((submit_request('{"track_token":"tok_cccccccccccccccccccccccc","type":"idea","teacher_name":"Mr. Lee","email":"lee@school.org","title":"Cell model","description":"A plant cell"}') ->> 'number') = '1002', 'idea request submitted');
 do $$ begin perform get_request('tok_zzzzzzzzzzzzzzzzzzzzzzzz'); raise exception 'no error';
 exception when others then if sqlerrm not like '%couldn’t find%' then raise; end if; end $$;
@@ -131,6 +136,20 @@ exception when others then if sqlerrm not like '%booked this time%' then raise; 
 select t.ok(true, 'booked time cannot be removed');
 select admin_handoff((select id from requests where number = 1001), 'PU3 front desk', 'Ms. Rivera') as ev3 \gset
 select t.ok((select handoff_admin_name = 'Sam Admin' and status = 'picked_up' from requests where number = 1001), 'hand-off records giver');
+reset role;
+set role anon;
+do $$ begin
+  perform submit_request('{"track_token":"tok_eeeeeeeeeeeeeeeeeeeeeeee","type":"idea","teacher_name":"Ms. Rivera","email":"rivera@school.org","title":"Again","description":"x"}');
+  raise exception 'no error';
+exception when others then if sqlerrm not like '%finished recently%' then raise; end if; end $$;
+select t.ok(true, 'cooldown: no new request within a week of finishing');
+reset role;
+update events set created_at = now() - interval '8 days' where status = 'printed' and request_id = (select id from requests where number = 1001);
+set role anon;
+select t.ok((submit_request('{"track_token":"tok_eeeeeeeeeeeeeeeeeeeeeeee","type":"idea","teacher_name":"Ms. Rivera","email":"rivera@school.org","title":"Again","description":"x"}') ->> 'number') is not null, 'cooldown: allowed again after a week');
+reset role;
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
 select admin_mark_email(:ev3, 'sent');
 select t.ok((select status = 'sent' and by_name = 'Sam Admin' from email_log where event_id = :ev3), 'email marked sent');
 select admin_mark_email(:ev3, 'draft');
@@ -144,7 +163,7 @@ insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000c
 select t.ok((select scopes = array['orders:read', 'pickups:write'] from admins where email = 'pat@school.org'), 'invite applied on sign-up, bogus scope dropped');
 set role authenticated;
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000c';
-select t.ok((select count(*) from requests) = 2, 'Pat can read');
+select t.ok((select count(*) from requests) = 3, 'Pat can read');
 do $$ begin perform admin_add_slots('[{"start":"2030-01-01T10:00Z","end":"2030-01-01T11:00Z"}]', array['PU2'], 1); raise exception 'no error';
 exception when others then if sqlerrm not like '%schedule:write%' then raise; end if; end $$;
 select t.ok(true, 'Pat lacks schedule:write');
@@ -155,7 +174,7 @@ do $$ begin insert into storage.objects (bucket_id, name, metadata) values ('upl
 exception when others then if sqlerrm not like '%row-level security%' then raise; end if; end $$;
 select t.ok(true, 'Pat cannot upload previews without orders:write');
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000b';
-select t.ok((select count(*) from requests) = 1 - 1 + 2, 'added account (orders:read) can read');
+select t.ok((select count(*) from requests) = 3, 'added account (orders:read) can read');
 set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
 do $$ begin perform admin_set_scopes('00000000-0000-0000-0000-00000000000a', array['orders:read']); raise exception 'no error';
 exception when others then if sqlerrm not like '%At least one admin%' then raise; end if; end $$;
