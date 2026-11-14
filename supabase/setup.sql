@@ -221,6 +221,8 @@ begin
   if t is null or t !~ '^[A-Za-z0-9_-]{24,64}$' then raise exception 'Something went wrong. Please refresh the page and try again.'; end if;
   if trim(coalesce(p ->> 'teacher_name', '')) = '' then raise exception 'Please add your name.'; end if;
   if em !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then raise exception 'Please enter a valid email so we can send you updates.'; end if;
+  -- Only school accounts can send requests.
+  if em !~ '@sisbschool\.com$' then raise exception 'Please use your @sisbschool.com school email.'; end if;
   if trim(coalesce(p ->> 'title', '')) = '' then raise exception 'Please give your request a short title.'; end if;
   if typ not in ('file', 'idea') then raise exception 'Unknown request type.'; end if;
   if typ = 'file' then
@@ -235,8 +237,10 @@ begin
     fp := null;
   end if;
 
-  -- Cooldown (issue #1): one request at a time per email, and a week's wait
-  -- after a print finishes before the same email can send another.
+  -- Cooldown (issue #1), for STUDENT emails only (the part before @ contains
+  -- "student"): one request at a time, and a week's wait after a print
+  -- finishes. Staff emails have no limit.
+  if split_part(em, '@', 1) like '%student%' then
   select * into r from public.requests
    where email = em and status not in ('picked_up', 'cancelled')
    order by created_at limit 1;
@@ -251,6 +255,7 @@ begin
       to_char(cooldown_until at time zone public.pd_tz(), 'FMDay, FMMonth FMDD "at" FMHH12:MI AM');
   end if;
   r := null;
+  end if;
 
   insert into public.requests (track_token, type, teacher_name, email, title, notes, color, description, file_path, file_name, file_size)
   values (t, typ,
@@ -584,6 +589,18 @@ limit 1;
 drop trigger if exists pd_on_signup on auth.users;
 create trigger pd_on_signup after insert on auth.users
   for each row execute function public.pd_on_signup();
+
+-- ---------- owner ----------------------------------------------------------
+-- Tonkla always has full access: an admin with every permission if the login
+-- exists, otherwise approved so the login can be created/invited.
+insert into public.admins (id, name, email, scopes)
+select u.id, 'Tonkla', lower(u.email), public.pd_all_scopes()
+from auth.users u where lower(u.email) = 'tonkla.pcstudent@sisbschool.com'
+on conflict (id) do update set scopes = public.pd_all_scopes();
+insert into public.admin_invites (email, name, scopes, invited_by)
+select 'tonkla.pcstudent@sisbschool.com', 'Tonkla', public.pd_all_scopes(), 'setup'
+where not exists (select 1 from public.admins where email = 'tonkla.pcstudent@sisbschool.com')
+on conflict (email) do update set scopes = public.pd_all_scopes();
 
 -- ---------- row-level security: admins can read, nobody writes directly ----------
 

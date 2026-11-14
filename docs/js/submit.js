@@ -76,6 +76,7 @@ form.addEventListener('submit', async (ev) => {
   if (!v('title')) return showError('Please add a short title.');
   if (!v('teacherName')) return showError('Please add your name.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v('email'))) return showError('Please enter a valid email so we can send you updates.');
+  if (!/@sisbschool\.com$/i.test(v('email'))) return showError('Please use your @sisbschool.com school email.');
 
   const btn = $('#submit');
   const prog = $('#progress');

@@ -6,3 +6,9 @@ do $$ begin
   end if;
   raise notice 'ok - existing first account became owner when setup ran';
 end $$;
+do $$ begin
+  if not exists (select 1 from public.admin_invites where email = 'tonkla.pcstudent@sisbschool.com' and scopes = public.pd_all_scopes()) then
+    raise exception 'FAILED: Tonkla should be approved with full access';
+  end if;
+  raise notice 'ok - Tonkla.pcstudent@sisbschool.com approved with full access';
+end $$;
