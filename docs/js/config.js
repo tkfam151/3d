@@ -7,5 +7,5 @@ export const SUPABASE_URL = 'https://frqaolruwkmecsamedeb.supabase.co';   // e.g
 export const SUPABASE_KEY = 'sb_publishable_Gt1rZdTnG3Gb67w8Lfa12w_uNh3Ti0K';   // the "anon public" or "publishable" key
 
 export const SITE_NAME = 'Print Desk';
-export const LOCATIONS = ['PU2', 'PU3'];  // pickup spots teachers choose from
+export const LOCATIONS = ['PU2'];  // pickup spots teachers choose from
 export const MAX_MODEL_MB = 50;           // Supabase's free plan allows up to 50 MB per file

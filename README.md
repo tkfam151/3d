@@ -8,14 +8,14 @@ The pages are hosted free on **GitHub Pages**. Data, files and admin logins live
 - Enter their **email (required)** and get a private tracking link.
 - For ideas: **approve the preview image** an admin sends, or ask for changes, before anything prints.
 - Get emails when printing **starts** and **finishes**.
-- **Book a pickup** at **PU2 or PU3** from the times admins set up, and change it later if needed.
+- **Book a pickup** at **PU2** from the times admins set up, and change it later if needed.
 - Get a **pickup confirmation email from the admin who handed it over**.
 
 **Admins** (`admin.html`, email + password) can:
 - Work through requests: *Started printing* → *Finished printing* → *Hand it off*.
 - Upload preview images for idea requests. The teacher must approve before printing.
 - Record each hand-off: **location** (short answer), **who received it**, and who gave it.
-- Set up **pickup times**: date, time window, 15–60 minute slots, weekly repeats, PU2 and/or PU3, spots per time.
+- Set up **pickup times**: date, time window, 15–60 minute slots, weekly repeats, PU2, spots per time.
 - Send teacher updates from their **own Gmail**. Each email is written for them; they click **Open in Gmail** and press Send.
 - Add other admins and choose each one’s **permissions**. Nobody can create an account by themselves.
 
